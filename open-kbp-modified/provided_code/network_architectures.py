@@ -134,16 +134,25 @@ class DefineDoseFromCT:
     def make_convolution_transpose_block(
         self, x: KerasTensor, num_filters: int, use_dropout: bool = True, skip_x: Optional[KerasTensor] = None, use_se: bool = None
     ) -> KerasTensor:
-        """Decoder block with InstanceNorm and optional SE."""
+        """Decoder block: upsample conv + stride-1 conv with residual (mirrors encoder)."""
         use_se = use_se if use_se is not None else self.use_se_blocks
         if skip_x is not None:
             x = Concatenate()([x, skip_x])
 
+        # First conv: upsample (stride 2)
         out = Conv3DTranspose(num_filters, self.filter_size, strides=self.stride_size, padding="same", use_bias=False)(x)
         out = InstanceNormalization()(out)
         if use_dropout:
             out = SpatialDropout3D(0.2)(out)
-        out = Activation("relu")(out)
+        out = LeakyReLU(negative_slope=0.2)(out)  # Consistent with encoder
+
+        # Second conv: stride 1 for more compute (mirrors encoder)
+        if self.use_residual:
+            residual = out
+            out = Conv3D(num_filters, (3, 3, 3), strides=(1, 1, 1), padding="same", use_bias=False)(out)
+            out = InstanceNormalization()(out)
+            out = LeakyReLU(negative_slope=0.2)(out)
+            out = Add()([out, residual])  # Residual connection
 
         if use_se:
             out = self.squeeze_excitation_block(out)
@@ -157,20 +166,21 @@ class DefineDoseFromCT:
         roi_masks = Input(self.data_shapes.structure_masks)
 
         # Build Model starting with Conv3D layers
+        # SE blocks only on deeper layers (x4+) to reduce overhead while preserving gain
         x = Concatenate()([ct_image, roi_masks])
-        x1 = self.make_convolution_block(x, self.initial_number_of_filters)
-        x2 = self.make_convolution_block(x1, 2 * self.initial_number_of_filters)
-        x3 = self.make_convolution_block(x2, 4 * self.initial_number_of_filters)
-        x4 = self.make_convolution_block(x3, 8 * self.initial_number_of_filters)
-        x5 = self.make_convolution_block(x4, 8 * self.initial_number_of_filters)
-        x6 = self.make_convolution_block(x5, 8 * self.initial_number_of_filters, use_norm=False)
+        x1 = self.make_convolution_block(x, self.initial_number_of_filters, use_se=False)
+        x2 = self.make_convolution_block(x1, 2 * self.initial_number_of_filters, use_se=False)
+        x3 = self.make_convolution_block(x2, 4 * self.initial_number_of_filters, use_se=False)
+        x4 = self.make_convolution_block(x3, 8 * self.initial_number_of_filters)  # SE if enabled
+        x5 = self.make_convolution_block(x4, 8 * self.initial_number_of_filters)  # SE if enabled
+        x6 = self.make_convolution_block(x5, 8 * self.initial_number_of_filters, use_norm=False)  # SE if enabled
 
         # Build model back up from bottleneck
-        x5b = self.make_convolution_transpose_block(x6, 8 * self.initial_number_of_filters, use_dropout=False)
-        x4b = self.make_convolution_transpose_block(x5b, 8 * self.initial_number_of_filters, skip_x=x5)
-        x3b = self.make_convolution_transpose_block(x4b, 4 * self.initial_number_of_filters, use_dropout=False, skip_x=x4)
-        x2b = self.make_convolution_transpose_block(x3b, 2 * self.initial_number_of_filters, skip_x=x3)
-        x1b = self.make_convolution_transpose_block(x2b, self.initial_number_of_filters, use_dropout=False, skip_x=x2)
+        x5b = self.make_convolution_transpose_block(x6, 8 * self.initial_number_of_filters, use_dropout=False)  # SE if enabled
+        x4b = self.make_convolution_transpose_block(x5b, 8 * self.initial_number_of_filters, skip_x=x5)  # SE if enabled
+        x3b = self.make_convolution_transpose_block(x4b, 4 * self.initial_number_of_filters, use_dropout=False, skip_x=x4, use_se=False)
+        x2b = self.make_convolution_transpose_block(x3b, 2 * self.initial_number_of_filters, skip_x=x3, use_se=False)
+        x1b = self.make_convolution_transpose_block(x2b, self.initial_number_of_filters, use_dropout=False, skip_x=x2, use_se=False)
 
         # Final layer (use float32 output for numerical stability with mixed precision)
         x0b = Concatenate()([x1b, x1])

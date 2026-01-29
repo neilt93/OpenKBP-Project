@@ -157,7 +157,7 @@ class PredictionModel(DefineDoseFromCT):
         super().__init__(
             data_shapes=data_loader.data_shapes,
             initial_number_of_filters=num_filters,
-            filter_size=(4, 4, 4),
+            filter_size=(3, 3, 3),  # 3x3x3 is lighter than 4x4x4, reduces bandwidth pressure
             stride_size=(2, 2, 2),
             gen_optimizer=Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.999),
             use_se_blocks=use_se_blocks,
