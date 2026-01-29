@@ -19,6 +19,8 @@ def augment_batch_tf(ct: tf.Tensor, structure_masks: tf.Tensor, dose: tf.Tensor,
     """
     TensorFlow-based data augmentation (XLA-compatible).
 
+    Uses tf.cond for proper graph-mode behavior.
+
     Args:
         ct: (batch, D, H, W, 1) CT images
         structure_masks: (batch, D, H, W, 10) ROI masks
@@ -30,21 +32,20 @@ def augment_batch_tf(ct: tf.Tensor, structure_masks: tf.Tensor, dose: tf.Tensor,
         Augmented (ct, structure_masks, dose) tuple
     """
     # Random left-right flip (axis 3 in BDHWC format)
-    if tf.random.uniform([]) < flip_prob:
-        ct = tf.reverse(ct, axis=[3])
-        structure_masks = tf.reverse(structure_masks, axis=[3])
-        dose = tf.reverse(dose, axis=[3])
+    do_lr_flip = tf.random.uniform([]) < flip_prob
+    ct = tf.cond(do_lr_flip, lambda: tf.reverse(ct, axis=[3]), lambda: ct)
+    structure_masks = tf.cond(do_lr_flip, lambda: tf.reverse(structure_masks, axis=[3]), lambda: structure_masks)
+    dose = tf.cond(do_lr_flip, lambda: tf.reverse(dose, axis=[3]), lambda: dose)
 
     # Random anterior-posterior flip (axis 2)
-    if tf.random.uniform([]) < flip_prob:
-        ct = tf.reverse(ct, axis=[2])
-        structure_masks = tf.reverse(structure_masks, axis=[2])
-        dose = tf.reverse(dose, axis=[2])
+    do_ap_flip = tf.random.uniform([]) < flip_prob
+    ct = tf.cond(do_ap_flip, lambda: tf.reverse(ct, axis=[2]), lambda: ct)
+    structure_masks = tf.cond(do_ap_flip, lambda: tf.reverse(structure_masks, axis=[2]), lambda: structure_masks)
+    dose = tf.cond(do_ap_flip, lambda: tf.reverse(dose, axis=[2]), lambda: dose)
 
-    # CT intensity scaling
-    if intensity_scale > 0:
-        scale = 1.0 + tf.random.uniform([], -intensity_scale, intensity_scale)
-        ct = ct * scale
+    # CT intensity scaling (always apply if intensity_scale > 0, just vary the scale)
+    scale = 1.0 + tf.random.uniform([], -intensity_scale, intensity_scale)
+    ct = ct * scale
 
     return ct, structure_masks, dose
 
