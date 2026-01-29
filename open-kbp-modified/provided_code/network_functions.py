@@ -269,7 +269,7 @@ class PredictionModel(DefineDoseFromCT):
 
         return tf.cond(
             nonzero_count > 0,
-            lambda: tf.reduce_sum(stacked) / nonzero_count,
+            lambda: tf.reduce_sum(tf.boolean_mask(stacked, nonzero_mask)) / nonzero_count,
             lambda: tf.constant(0.0, dtype=tf.float32)
         )
 
