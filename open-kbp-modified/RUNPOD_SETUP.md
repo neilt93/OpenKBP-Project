@@ -11,7 +11,7 @@
 ```bash
 cd /workspace
 git clone https://github.com/neilt93/OpenKBP-Project.git
-cd OpenKBP-Project/open-kbp
+cd OpenKBP-Project/open-kbp-modified
 ```
 
 ### 3. Install Dependencies
@@ -29,20 +29,20 @@ runpodctl send provided-data.zip
 
 # On RunPod (copy the command it gives you):
 runpodctl receive <code>
-unzip provided-data.zip -d /workspace/OpenKBP-Project/open-kbp/
+unzip provided-data.zip -d /workspace/OpenKBP-Project/open-kbp-modified/
 ```
 
 **Option B: Direct from original repo**
 ```bash
 cd /workspace
-git clone https://github.com/ababier/open-kbp.git open-kbp-data
-cp -r open-kbp-data/provided-data /workspace/OpenKBP-Project/open-kbp/
-rm -rf open-kbp-data
+git clone https://github.com/ababier/open-kbp.git open-kbp-original
+cp -r open-kbp-original/provided-data /workspace/OpenKBP-Project/open-kbp-modified/
+rm -rf open-kbp-original
 ```
 
 ### 5. Run Training
 ```bash
-cd /workspace/OpenKBP-Project/open-kbp
+cd /workspace/OpenKBP-Project/open-kbp-modified
 
 # Default: 64 filters, 100 epochs
 python runpod_train.py

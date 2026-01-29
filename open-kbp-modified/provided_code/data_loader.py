@@ -14,15 +14,22 @@ from provided_code.utils import get_paths, load_file
 class DataLoader:
     """Loads OpenKBP csv data in structured format for dose prediction models."""
 
-    def __init__(self, patient_paths: List[Path], batch_size: int = 2, cache_data: bool = True):
+    # Normalization constants (based on OpenKBP winning team practices)
+    CT_MIN = 0.0       # Minimum CT value (HU)
+    CT_MAX = 3000.0    # Maximum CT value (HU) - clips high-density materials
+    DOSE_PRESCRIPTION = 70.0  # Prescription dose in Gy for normalization
+
+    def __init__(self, patient_paths: List[Path], batch_size: int = 2, cache_data: bool = True, normalize: bool = True):
         """
         :param patient_paths: list of the paths where data for each patient is stored
         :param batch_size: the number of data points to lead in a single batch
         :param cache_data: if True, pre-load and pre-shape all data into RAM for faster training
+        :param normalize: if True, normalize CT to [0,1] and dose by prescription dose
         """
         self.patient_paths = patient_paths
         self.batch_size = batch_size
         self.cache_data = cache_data
+        self.normalize = normalize
         self._data_cache: Dict[str, dict] = {}  # Cache for raw data
         self._shaped_cache: Dict[str, Dict[str, NDArray]] = {}  # Cache for pre-shaped tensors
         # Pre-stacked arrays for fast batch slicing (eliminates Python loop overhead)
@@ -178,5 +185,15 @@ class DataLoader:
             shaped_data = data[key]
         else:
             np.put(shaped_data, data[key]["indices"], data[key]["data"])
+
+        # Apply normalization if enabled
+        if self.normalize:
+            if key == "ct":
+                # CT normalization: clip to [0, 3000] HU and scale to [0, 1]
+                shaped_data = np.clip(shaped_data, self.CT_MIN, self.CT_MAX)
+                shaped_data = shaped_data / self.CT_MAX
+            elif key in ("dose", "predicted_dose"):
+                # Dose normalization: divide by prescription dose (70 Gy)
+                shaped_data = shaped_data / self.DOSE_PRESCRIPTION
 
         return shaped_data
