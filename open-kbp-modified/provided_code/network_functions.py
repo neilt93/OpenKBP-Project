@@ -13,10 +13,11 @@ from provided_code.network_architectures import DefineDoseFromCT
 from provided_code.utils import get_paths, sparse_vector_function
 
 
-def augment_batch(ct: np.ndarray, structure_masks: np.ndarray, dose: np.ndarray,
-                   flip_prob: float = 0.5, intensity_scale: float = 0.1) -> tuple:
+@tf.function
+def augment_batch_tf(ct: tf.Tensor, structure_masks: tf.Tensor, dose: tf.Tensor,
+                     flip_prob: float = 0.5, intensity_scale: float = 0.1) -> tuple:
     """
-    Apply data augmentation to a training batch.
+    TensorFlow-based data augmentation (XLA-compatible).
 
     Args:
         ct: (batch, D, H, W, 1) CT images
@@ -28,6 +29,29 @@ def augment_batch(ct: np.ndarray, structure_masks: np.ndarray, dose: np.ndarray,
     Returns:
         Augmented (ct, structure_masks, dose) tuple
     """
+    # Random left-right flip (axis 3 in BDHWC format)
+    if tf.random.uniform([]) < flip_prob:
+        ct = tf.reverse(ct, axis=[3])
+        structure_masks = tf.reverse(structure_masks, axis=[3])
+        dose = tf.reverse(dose, axis=[3])
+
+    # Random anterior-posterior flip (axis 2)
+    if tf.random.uniform([]) < flip_prob:
+        ct = tf.reverse(ct, axis=[2])
+        structure_masks = tf.reverse(structure_masks, axis=[2])
+        dose = tf.reverse(dose, axis=[2])
+
+    # CT intensity scaling
+    if intensity_scale > 0:
+        scale = 1.0 + tf.random.uniform([], -intensity_scale, intensity_scale)
+        ct = ct * scale
+
+    return ct, structure_masks, dose
+
+
+def augment_batch(ct: np.ndarray, structure_masks: np.ndarray, dose: np.ndarray,
+                   flip_prob: float = 0.5, intensity_scale: float = 0.1) -> tuple:
+    """NumPy fallback for augmentation (slower, breaks XLA)."""
     ct = ct.copy()
     structure_masks = structure_masks.copy()
     dose = dose.copy()
@@ -35,19 +59,16 @@ def augment_batch(ct: np.ndarray, structure_masks: np.ndarray, dose: np.ndarray,
     batch_size = ct.shape[0]
 
     for b in range(batch_size):
-        # Random left-right flip (axis 2 = left-right in patient coords)
         if np.random.random() < flip_prob:
             ct[b] = np.flip(ct[b], axis=2)
             structure_masks[b] = np.flip(structure_masks[b], axis=2)
             dose[b] = np.flip(dose[b], axis=2)
 
-        # Random anterior-posterior flip (axis 1)
         if np.random.random() < flip_prob:
             ct[b] = np.flip(ct[b], axis=1)
             structure_masks[b] = np.flip(structure_masks[b], axis=1)
             dose[b] = np.flip(dose[b], axis=1)
 
-        # CT intensity scaling (only CT, not dose)
         if intensity_scale > 0:
             scale = 1.0 + np.random.uniform(-intensity_scale, intensity_scale)
             ct[b] = ct[b] * scale
@@ -55,38 +76,55 @@ def augment_batch(ct: np.ndarray, structure_masks: np.ndarray, dose: np.ndarray,
     return ct, structure_masks, dose
 
 
-def soft_percentile(values: tf.Tensor, percentile: float, temperature: float = 0.5) -> tf.Tensor:
+def histogram_percentile(values: tf.Tensor, percentile: float, num_bins: int = 100) -> tf.Tensor:
     """
-    Differentiable approximation of percentile using soft sorting.
+    Fast differentiable percentile using histogram-based approximation.
+
+    O(n + num_bins) instead of O(n²). Much faster and more stable than soft sorting.
 
     Args:
-        values: 1D tensor of values
+        values: 1D tensor of values (float32)
         percentile: target percentile (0-100)
-        temperature: controls sharpness (lower = closer to true percentile)
+        num_bins: number of histogram bins
 
     Returns:
-        Soft approximation of the percentile value
+        Approximate percentile value
     """
-    n = tf.cast(tf.shape(values)[0], tf.float32)
+    values = tf.cast(values, tf.float32)
 
-    # Target rank for this percentile
-    target_rank = n * percentile / 100.0
+    # Get value range
+    v_min = tf.reduce_min(values)
+    v_max = tf.reduce_max(values)
+    v_range = v_max - v_min + 1e-8
 
-    # Compute soft ranks using pairwise comparisons
-    values_col = tf.expand_dims(values, 1)
-    values_row = tf.expand_dims(values, 0)
-    diff_matrix = values_col - values_row
+    # Normalize values to [0, 1]
+    values_norm = (values - v_min) / v_range
 
-    # Soft comparison: sigmoid gives smooth 0-1 for each comparison
-    soft_comparisons = tf.sigmoid(diff_matrix / temperature)
-    soft_ranks = tf.reduce_sum(soft_comparisons, axis=1)
+    # Create soft histogram using sigmoid
+    bin_edges = tf.linspace(0.0, 1.0, num_bins + 1)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
-    # Weight each value by how close its rank is to target
-    rank_distances = tf.abs(soft_ranks - target_rank)
-    weights = tf.nn.softmax(-rank_distances / temperature)
+    # Soft assignment to bins (differentiable)
+    # Each value contributes to nearby bins with Gaussian weight
+    sigma = 1.0 / num_bins
+    values_expanded = tf.expand_dims(values_norm, 1)  # (n, 1)
+    bin_centers_expanded = tf.expand_dims(bin_centers, 0)  # (1, num_bins)
+    weights = tf.exp(-0.5 * tf.square((values_expanded - bin_centers_expanded) / sigma))
+    hist = tf.reduce_sum(weights, axis=0)  # (num_bins,)
 
-    # Weighted sum gives soft percentile
-    return tf.reduce_sum(weights * values)
+    # Normalize to PDF then CDF
+    hist = hist / (tf.reduce_sum(hist) + 1e-8)
+    cdf = tf.cumsum(hist)
+
+    # Find bin where CDF crosses target percentile
+    target = percentile / 100.0
+    # Soft argmax for the crossing point
+    crossing_weights = tf.nn.softmax(-tf.abs(cdf - target) * 20.0)
+    bin_idx = tf.reduce_sum(crossing_weights * tf.cast(tf.range(num_bins), tf.float32))
+
+    # Interpolate to get value
+    percentile_norm = bin_idx / tf.cast(num_bins, tf.float32)
+    return v_min + percentile_norm * v_range
 
 
 class PredictionModel(DefineDoseFromCT):
@@ -122,6 +160,7 @@ class PredictionModel(DefineDoseFromCT):
             stride_size=(2, 2, 2),
             gen_optimizer=Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.999),
             use_se_blocks=use_se_blocks,
+            use_residual=True,  # Always use residual connections
             use_jit=use_jit,
         )
 
@@ -163,71 +202,94 @@ class PredictionModel(DefineDoseFromCT):
         return indices
 
     def _compute_dvh_loss(
-        self, y_true: tf.Tensor, y_pred: tf.Tensor, structure_masks: tf.Tensor, temperature: float = 0.5
+        self, y_true: tf.Tensor, y_pred: tf.Tensor, structure_masks: tf.Tensor
     ) -> tf.Tensor:
         """
         Compute DVH loss for target structures (PTVs).
+
+        Uses histogram-based percentile approximation for speed and stability.
+        All computations in float32 for mixed precision compatibility.
 
         Args:
             y_true: (batch, D, H, W, 1) ground truth dose
             y_pred: (batch, D, H, W, 1) predicted dose
             structure_masks: (batch, D, H, W, 10) ROI masks
-            temperature: soft percentile temperature
 
         Returns:
-            Scalar DVH loss
+            Scalar DVH loss (float32)
         """
         target_indices = self._get_target_roi_indices()
-        percentiles = {'D_99': 1.0, 'D_95': 5.0, 'D_1': 99.0}
-
-        dvh_losses = []
-        batch_size = tf.shape(y_true)[0]
-
-        for b in range(batch_size):
-            y_true_b = y_true[b, ..., 0]  # (D, H, W)
-            y_pred_b = y_pred[b, ..., 0]  # (D, H, W)
-            masks_b = structure_masks[b]   # (D, H, W, 10)
-
-            for roi_idx in target_indices:
-                roi_mask = masks_b[..., roi_idx]  # (D, H, W)
-                mask_sum = tf.reduce_sum(roi_mask)
-
-                # Skip empty ROIs
-                if mask_sum < 1.0:
-                    continue
-
-                # Extract dose values within ROI
-                true_dose_roi = tf.boolean_mask(y_true_b, roi_mask > 0.5)
-                pred_dose_roi = tf.boolean_mask(y_pred_b, roi_mask > 0.5)
-
-                for _, percentile in percentiles.items():
-                    true_p = soft_percentile(true_dose_roi, percentile, temperature)
-                    pred_p = soft_percentile(pred_dose_roi, percentile, temperature)
-                    dvh_losses.append(tf.abs(true_p - pred_p))
-
-        if len(dvh_losses) == 0:
+        if not target_indices:
             return tf.constant(0.0, dtype=tf.float32)
 
-        return tf.reduce_mean(tf.stack(dvh_losses))
+        # Cast to float32 for stability
+        y_true = tf.cast(y_true, tf.float32)
+        y_pred = tf.cast(y_pred, tf.float32)
+        structure_masks = tf.cast(structure_masks, tf.float32)
 
-    def _train_step_with_dvh(
+        percentile_list = [1.0, 5.0, 99.0]  # D_99, D_95, D_1
+        losses = []
+
+        # Process first sample in batch only (for speed - can extend if needed)
+        y_true_0 = y_true[0, ..., 0]  # (D, H, W)
+        y_pred_0 = y_pred[0, ..., 0]
+        masks_0 = structure_masks[0]
+
+        for roi_idx in target_indices:
+            roi_mask = masks_0[..., roi_idx]
+            mask_bool = roi_mask > 0.5
+
+            # Skip if ROI is empty
+            if tf.reduce_sum(tf.cast(mask_bool, tf.float32)) < 10.0:
+                continue
+
+            true_dose_roi = tf.boolean_mask(y_true_0, mask_bool)
+            pred_dose_roi = tf.boolean_mask(y_pred_0, mask_bool)
+
+            for percentile in percentile_list:
+                true_p = histogram_percentile(true_dose_roi, percentile)
+                pred_p = histogram_percentile(pred_dose_roi, percentile)
+                losses.append(tf.abs(true_p - pred_p))
+
+        if not losses:
+            return tf.constant(0.0, dtype=tf.float32)
+
+        return tf.reduce_mean(tf.stack(losses))
+
+    @tf.function(jit_compile=True)
+    def _train_step_compiled(
         self, ct: tf.Tensor, structure_masks: tf.Tensor, dose_true: tf.Tensor
-    ) -> dict:
-        """Custom training step with DVH loss."""
+    ) -> tuple:
+        """XLA-compiled training step for maximum performance."""
         with tf.GradientTape() as tape:
             dose_pred = self.generator([ct, structure_masks], training=True)
 
-            # MAE loss
-            mae_loss = tf.reduce_mean(tf.abs(dose_true - dose_pred))
+            # Cast to float32 for loss computation (important for mixed precision)
+            dose_pred_f32 = tf.cast(dose_pred, tf.float32)
+            dose_true_f32 = tf.cast(dose_true, tf.float32)
 
-            # DVH loss
-            dvh_loss = self._compute_dvh_loss(dose_true, dose_pred, structure_masks)
-            total_loss = mae_loss + self.dvh_weight * dvh_loss
+            # MAE loss in float32
+            mae_loss = tf.reduce_mean(tf.abs(dose_true_f32 - dose_pred_f32))
+
+            # DVH loss (already in float32)
+            if self.use_dvh_loss:
+                dvh_loss = self._compute_dvh_loss(dose_true_f32, dose_pred_f32, tf.cast(structure_masks, tf.float32))
+                total_loss = mae_loss + self.dvh_weight * dvh_loss
+            else:
+                dvh_loss = tf.constant(0.0, dtype=tf.float32)
+                total_loss = mae_loss
 
         # Compute and apply gradients
         gradients = tape.gradient(total_loss, self.generator.trainable_variables)
         self.gen_optimizer.apply_gradients(zip(gradients, self.generator.trainable_variables))
 
+        return total_loss, mae_loss, dvh_loss
+
+    def _train_step_with_dvh(
+        self, ct: tf.Tensor, structure_masks: tf.Tensor, dose_true: tf.Tensor
+    ) -> dict:
+        """Wrapper for compiled training step."""
+        total_loss, mae_loss, dvh_loss = self._train_step_compiled(ct, structure_masks, dose_true)
         return {
             'loss': float(total_loss),
             'mae': float(mae_loss),
@@ -255,23 +317,19 @@ class PredictionModel(DefineDoseFromCT):
             epoch_metrics = {'loss': [], 'mae': [], 'dvh': []}
 
             for idx, batch in enumerate(self.data_loader.get_batches()):
-                # Get batch data
-                ct, structure_masks, dose = batch.ct, batch.structure_masks, batch.dose
+                # Get batch data and convert to tensors
+                ct = tf.constant(batch.ct, dtype=tf.float32)
+                structure_masks = tf.constant(batch.structure_masks, dtype=tf.float32)
+                dose = tf.constant(batch.dose, dtype=tf.float32)
 
-                # Apply augmentation if enabled
+                # Apply TF augmentation if enabled (XLA-compatible)
                 if self.use_augmentation:
-                    ct, structure_masks, dose = augment_batch(ct, structure_masks, dose)
+                    ct, structure_masks, dose = augment_batch_tf(ct, structure_masks, dose)
 
-                if self.use_dvh_loss:
-                    # Custom training step with DVH loss
-                    metrics = self._train_step_with_dvh(ct, structure_masks, dose)
-                    for k, v in metrics.items():
-                        epoch_metrics[k].append(v)
-                else:
-                    # Standard training
-                    model_loss = self.generator.train_on_batch([ct, structure_masks], [dose])
-                    epoch_metrics['loss'].append(model_loss)
-                    epoch_metrics['mae'].append(model_loss)
+                # Use compiled training step for both DVH and standard
+                metrics = self._train_step_with_dvh(ct, structure_masks, dose)
+                for k, v in metrics.items():
+                    epoch_metrics[k].append(v)
 
             # Log metrics
             avg_metrics = {k: sum(v) / len(v) for k, v in epoch_metrics.items() if v}

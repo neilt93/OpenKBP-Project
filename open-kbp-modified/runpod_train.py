@@ -53,6 +53,7 @@ def main():
     parser.add_argument('--no-mixed-precision', action='store_true', help='Disable mixed precision (float16) training')
     parser.add_argument('--no-jit', action='store_true', help='Disable XLA JIT compilation')
     parser.add_argument('--no-cache', action='store_true', help='Disable data caching (match original behavior)')
+    parser.add_argument('--batch-size', type=int, default=2, help='Batch size (default: 2, reduce if OOM)')
     args = parser.parse_args()
 
     # Set random seeds if specified (for ensemble training)
@@ -135,7 +136,7 @@ def main():
         feature_str = f" with {', '.join(features)}" if features else ""
         print(f"\nStarting training: {num_filters} filters, {num_epochs} epochs{feature_str}")
 
-        data_loader_train = DataLoader(training_plan_paths, normalize=not args.no_normalize, cache_data=not args.no_cache)
+        data_loader_train = DataLoader(training_plan_paths, batch_size=args.batch_size, normalize=not args.no_normalize, cache_data=not args.no_cache)
         dose_prediction_model_train = PredictionModel(
             data_loader_train, results_dir, prediction_name, "train", num_filters,
             use_se_blocks=args.use_se,

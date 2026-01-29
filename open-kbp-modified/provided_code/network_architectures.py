@@ -5,7 +5,7 @@ import tensorflow as tf
 from tensorflow.keras.layers import (
     Activation, AveragePooling3D, Conv3D, Conv3DTranspose,
     Input, LeakyReLU, SpatialDropout3D, Concatenate, BatchNormalization,
-    GlobalAveragePooling3D, Dense, Reshape, Multiply
+    GlobalAveragePooling3D, Dense, Reshape, Multiply, Add, Layer
 )
 from tensorflow.keras.models import Model
 
@@ -14,6 +14,44 @@ KerasTensor = Any
 OptimizerV2 = Any
 
 from provided_code.data_shapes import DataShapes
+
+
+class InstanceNormalization(Layer):
+    """Instance Normalization layer - normalizes per sample per channel.
+
+    Better than BatchNorm for small batch sizes (1-2) common in 3D medical imaging.
+    """
+    def __init__(self, epsilon: float = 1e-5, **kwargs):
+        super().__init__(**kwargs)
+        self.epsilon = epsilon
+
+    def build(self, input_shape):
+        # Learnable scale (gamma) and shift (beta) per channel
+        self.gamma = self.add_weight(
+            name='gamma',
+            shape=(input_shape[-1],),
+            initializer='ones',
+            trainable=True
+        )
+        self.beta = self.add_weight(
+            name='beta',
+            shape=(input_shape[-1],),
+            initializer='zeros',
+            trainable=True
+        )
+        super().build(input_shape)
+
+    def call(self, x):
+        # Normalize over spatial dimensions (1, 2, 3) for 3D data
+        mean = tf.reduce_mean(x, axis=[1, 2, 3], keepdims=True)
+        var = tf.math.reduce_variance(x, axis=[1, 2, 3], keepdims=True)
+        x_norm = (x - mean) / tf.sqrt(var + self.epsilon)
+        return self.gamma * x_norm + self.beta
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({'epsilon': self.epsilon})
+        return config
 
 
 class DefineDoseFromCT:
@@ -29,6 +67,7 @@ class DefineDoseFromCT:
         gen_optimizer: OptimizerV2,
         use_se_blocks: bool = False,
         se_reduction_ratio: int = 8,
+        use_residual: bool = True,
         use_jit: bool = True,
     ):
         self.data_shapes = data_shapes
@@ -38,6 +77,7 @@ class DefineDoseFromCT:
         self.gen_optimizer = gen_optimizer
         self.use_se_blocks = use_se_blocks
         self.se_reduction_ratio = se_reduction_ratio
+        self.use_residual = use_residual
         self.use_jit = use_jit
 
     def squeeze_excitation_block(self, x: KerasTensor, reduction_ratio: int = None) -> KerasTensor:
@@ -68,30 +108,41 @@ class DefineDoseFromCT:
 
         return x
 
-    def make_convolution_block(self, x: KerasTensor, num_filters: int, use_batch_norm: bool = True, use_se: bool = None) -> KerasTensor:
+    def make_convolution_block(self, x: KerasTensor, num_filters: int, use_norm: bool = True, use_se: bool = None) -> KerasTensor:
+        """Encoder block with optional residual connection, InstanceNorm, and SE."""
         use_se = use_se if use_se is not None else self.use_se_blocks
-        x = Conv3D(num_filters, self.filter_size, strides=self.stride_size, padding="same", use_bias=False)(x)
-        if use_batch_norm:
-            x = BatchNormalization(momentum=0.99, epsilon=1e-3)(x)
-        x = LeakyReLU(alpha=0.2)(x)
+
+        # Main path
+        out = Conv3D(num_filters, self.filter_size, strides=self.stride_size, padding="same", use_bias=False)(x)
+        if use_norm:
+            out = InstanceNormalization()(out)
+        out = LeakyReLU(negative_slope=0.2)(out)
+
+        # Optional residual: add 1x1 conv to match dimensions if needed
+        if self.use_residual and x.shape[-1] == num_filters and self.stride_size == (1, 1, 1):
+            out = Add()([out, x])
+
         if use_se:
-            x = self.squeeze_excitation_block(x)
-        return x
+            out = self.squeeze_excitation_block(out)
+        return out
 
     def make_convolution_transpose_block(
         self, x: KerasTensor, num_filters: int, use_dropout: bool = True, skip_x: Optional[KerasTensor] = None, use_se: bool = None
     ) -> KerasTensor:
+        """Decoder block with InstanceNorm and optional SE."""
         use_se = use_se if use_se is not None else self.use_se_blocks
         if skip_x is not None:
             x = Concatenate()([x, skip_x])
-        x = Conv3DTranspose(num_filters, self.filter_size, strides=self.stride_size, padding="same", use_bias=False)(x)
-        x = BatchNormalization(momentum=0.99, epsilon=1e-3)(x)
+
+        out = Conv3DTranspose(num_filters, self.filter_size, strides=self.stride_size, padding="same", use_bias=False)(x)
+        out = InstanceNormalization()(out)
         if use_dropout:
-            x = SpatialDropout3D(0.2)(x)
-        x = LeakyReLU(alpha=0)(x)  # Use LeakyReLU(alpha = 0) instead of ReLU because ReLU is buggy when saved
+            out = SpatialDropout3D(0.2)(out)
+        out = Activation("relu")(out)
+
         if use_se:
-            x = self.squeeze_excitation_block(x)
-        return x
+            out = self.squeeze_excitation_block(out)
+        return out
 
     def define_generator(self) -> Model:
         """Makes a generator that takes a CT image as input to generate a dose distribution of the same dimensions"""
