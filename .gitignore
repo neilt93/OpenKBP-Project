@@ -1,0 +1,33 @@
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Large model files (track separately or use Git LFS)
+*.h5
+
+# Large data files
+provided-data/
+
+# Results (regenerable)
+results/
+*-predictions/
+submissions/
+
+# Claude config
+.claude/
