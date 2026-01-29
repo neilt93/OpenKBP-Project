@@ -13,16 +13,17 @@ from provided_code.utils import get_paths, sparse_vector_function
 
 
 class PredictionModel(DefineDoseFromCT):
-    def __init__(self, data_loader: DataLoader, results_patent_path: Path, model_name: str, stage: str) -> None:
+    def __init__(self, data_loader: DataLoader, results_patent_path: Path, model_name: str, stage: str, num_filters: int = 1) -> None:
         """
         :param data_loader: An object that loads batches of image data
         :param results_patent_path: The path at which all results and generated models will be saved
         :param model_name: The name of your model, used when saving and loading data
         :param stage: Identify stage of model development (train, validation, test)
+        :param num_filters: Initial number of filters in U-Net (recommend 64+ for real training)
         """
         super().__init__(
             data_shapes=data_loader.data_shapes,
-            initial_number_of_filters=1,  # Recommend increasing to 64 +
+            initial_number_of_filters=num_filters,
             filter_size=(4, 4, 4),
             stride_size=(2, 2, 2),
             gen_optimizer=Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.999),

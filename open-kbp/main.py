@@ -5,9 +5,12 @@ from provided_code import DataLoader, DoseEvaluator, PredictionModel, get_paths
 
 if __name__ == "__main__":
 
-    prediction_name = "baseline"  # Name model to train and number of epochs to train it for
-    test_time = False  # Only change this to True when the model has been fully tuned on the validation set
-    num_epochs = 2  # This should probably be increased to 100-200 after your dry run
+    # Configuration
+    num_filters = 1   # Recommend 64+ for real training
+    num_epochs = 2    # Recommend 100-200 for real training
+    test_time = False # Set True to evaluate on test set
+
+    prediction_name = f"{num_filters}filter_{num_epochs}epoch"
 
     # Define project directories
     primary_directory = Path().resolve()  # directory where everything is stored
@@ -22,7 +25,7 @@ if __name__ == "__main__":
 
     # Train a model
     data_loader_train = DataLoader(training_plan_paths)
-    dose_prediction_model_train = PredictionModel(data_loader_train, results_dir, prediction_name, "train")
+    dose_prediction_model_train = PredictionModel(data_loader_train, results_dir, prediction_name, "train", num_filters)
     dose_prediction_model_train.train_model(num_epochs, save_frequency=1, keep_model_history=20)
 
     # Define hold out set
@@ -32,7 +35,7 @@ if __name__ == "__main__":
 
     # Predict dose for the held out set
     data_loader_hold_out = DataLoader(hold_out_plan_paths)
-    dose_prediction_model_hold_out = PredictionModel(data_loader_hold_out, results_dir, model_name=prediction_name, stage=stage_name)
+    dose_prediction_model_hold_out = PredictionModel(data_loader_hold_out, results_dir, prediction_name, stage_name, num_filters)
     dose_prediction_model_hold_out.predict_dose(epoch=num_epochs)
 
     # Evaluate dose metrics
