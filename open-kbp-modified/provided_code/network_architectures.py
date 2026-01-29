@@ -109,18 +109,23 @@ class DefineDoseFromCT:
         return x
 
     def make_convolution_block(self, x: KerasTensor, num_filters: int, use_norm: bool = True, use_se: bool = None) -> KerasTensor:
-        """Encoder block with optional residual connection, InstanceNorm, and SE."""
+        """Encoder block: downsample conv + stride-1 conv with residual."""
         use_se = use_se if use_se is not None else self.use_se_blocks
 
-        # Main path
+        # First conv: downsample (stride 2)
         out = Conv3D(num_filters, self.filter_size, strides=self.stride_size, padding="same", use_bias=False)(x)
         if use_norm:
             out = InstanceNormalization()(out)
         out = LeakyReLU(negative_slope=0.2)(out)
 
-        # Optional residual: add 1x1 conv to match dimensions if needed
-        if self.use_residual and x.shape[-1] == num_filters and self.stride_size == (1, 1, 1):
-            out = Add()([out, x])
+        # Second conv: stride 1 for more compute (residual-friendly)
+        if self.use_residual:
+            residual = out  # Save for skip
+            out = Conv3D(num_filters, (3, 3, 3), strides=(1, 1, 1), padding="same", use_bias=False)(out)
+            if use_norm:
+                out = InstanceNormalization()(out)
+            out = LeakyReLU(negative_slope=0.2)(out)
+            out = Add()([out, residual])  # Residual connection
 
         if use_se:
             out = self.squeeze_excitation_block(out)
@@ -158,7 +163,7 @@ class DefineDoseFromCT:
         x3 = self.make_convolution_block(x2, 4 * self.initial_number_of_filters)
         x4 = self.make_convolution_block(x3, 8 * self.initial_number_of_filters)
         x5 = self.make_convolution_block(x4, 8 * self.initial_number_of_filters)
-        x6 = self.make_convolution_block(x5, 8 * self.initial_number_of_filters, use_batch_norm=False)
+        x6 = self.make_convolution_block(x5, 8 * self.initial_number_of_filters, use_norm=False)
 
         # Build model back up from bottleneck
         x5b = self.make_convolution_transpose_block(x6, 8 * self.initial_number_of_filters, use_dropout=False)

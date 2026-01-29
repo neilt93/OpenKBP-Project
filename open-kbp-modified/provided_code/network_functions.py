@@ -228,33 +228,49 @@ class PredictionModel(DefineDoseFromCT):
         structure_masks = tf.cast(structure_masks, tf.float32)
 
         percentile_list = [1.0, 5.0, 99.0]  # D_99, D_95, D_1
-        losses = []
 
-        # Process first sample in batch only (for speed - can extend if needed)
+        # Process first sample in batch only (for speed)
         y_true_0 = y_true[0, ..., 0]  # (D, H, W)
         y_pred_0 = y_pred[0, ..., 0]
         masks_0 = structure_masks[0]
 
-        for roi_idx in target_indices:
+        def compute_roi_percentile_loss(roi_idx, percentile):
+            """Compute single percentile loss for one ROI."""
             roi_mask = masks_0[..., roi_idx]
             mask_bool = roi_mask > 0.5
+            mask_count = tf.reduce_sum(tf.cast(mask_bool, tf.float32))
 
-            # Skip if ROI is empty
-            if tf.reduce_sum(tf.cast(mask_bool, tf.float32)) < 10.0:
-                continue
-
-            true_dose_roi = tf.boolean_mask(y_true_0, mask_bool)
-            pred_dose_roi = tf.boolean_mask(y_pred_0, mask_bool)
-
-            for percentile in percentile_list:
+            def compute_loss():
+                true_dose_roi = tf.boolean_mask(y_true_0, mask_bool)
+                pred_dose_roi = tf.boolean_mask(y_pred_0, mask_bool)
                 true_p = histogram_percentile(true_dose_roi, percentile)
                 pred_p = histogram_percentile(pred_dose_roi, percentile)
-                losses.append(tf.abs(true_p - pred_p))
+                return tf.abs(true_p - pred_p)
 
-        if not losses:
-            return tf.constant(0.0, dtype=tf.float32)
+            # Use tf.cond instead of Python if
+            return tf.cond(
+                mask_count >= 10.0,
+                compute_loss,
+                lambda: tf.constant(0.0, dtype=tf.float32)
+            )
 
-        return tf.reduce_mean(tf.stack(losses))
+        # Compute all losses (static unrolling for small loops is OK)
+        all_losses = []
+        for roi_idx in target_indices:
+            for percentile in percentile_list:
+                loss = compute_roi_percentile_loss(roi_idx, percentile)
+                all_losses.append(loss)
+
+        # Stack and compute mean of non-zero losses
+        stacked = tf.stack(all_losses)
+        nonzero_mask = stacked > 0.0
+        nonzero_count = tf.reduce_sum(tf.cast(nonzero_mask, tf.float32))
+
+        return tf.cond(
+            nonzero_count > 0,
+            lambda: tf.reduce_sum(stacked) / nonzero_count,
+            lambda: tf.constant(0.0, dtype=tf.float32)
+        )
 
     @tf.function(jit_compile=True)
     def _train_step_compiled(
@@ -317,10 +333,10 @@ class PredictionModel(DefineDoseFromCT):
             epoch_metrics = {'loss': [], 'mae': [], 'dvh': []}
 
             for idx, batch in enumerate(self.data_loader.get_batches()):
-                # Get batch data and convert to tensors
-                ct = tf.constant(batch.ct, dtype=tf.float32)
-                structure_masks = tf.constant(batch.structure_masks, dtype=tf.float32)
-                dose = tf.constant(batch.dose, dtype=tf.float32)
+                # Get batch data and convert to tensors (convert_to_tensor allows overlap)
+                ct = tf.convert_to_tensor(batch.ct, dtype=tf.float32)
+                structure_masks = tf.convert_to_tensor(batch.structure_masks, dtype=tf.float32)
+                dose = tf.convert_to_tensor(batch.dose, dtype=tf.float32)
 
                 # Apply TF augmentation if enabled (XLA-compatible)
                 if self.use_augmentation:
