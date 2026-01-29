@@ -64,13 +64,15 @@ class PredictionModel(DefineDoseFromCT):
         self.data_loader.set_mode("training_model")
         for epoch in range(self.current_epoch, epochs):
             self.current_epoch = epoch
-            print(f"Beginning epoch {self.current_epoch}")
             self.data_loader.shuffle_data()
 
+            epoch_losses = []
             for idx, batch in enumerate(self.data_loader.get_batches()):
                 model_loss = self.generator.train_on_batch([batch.ct, batch.structure_masks], [batch.dose])
-                print(f"Model loss at epoch {self.current_epoch} batch {idx} is {model_loss:.3f}")
+                epoch_losses.append(model_loss)
 
+            avg_loss = sum(epoch_losses) / len(epoch_losses)
+            print(f"Epoch {self.current_epoch}: avg_loss={avg_loss:.4f}")
             self.manage_model_storage(save_frequency, keep_model_history)
 
     def _set_epoch_start(self) -> None:
@@ -83,8 +85,8 @@ class PredictionModel(DefineDoseFromCT):
     def initialize_networks(self) -> None:
         if self.current_epoch >= 1:
             self.generator = load_model(self._get_generator_path(self.current_epoch))
-            # Recompile to fix optimizer state (Keras 3 compatibility)
-            self.generator.compile(loss="mean_absolute_error", optimizer=Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.999))
+            # Recompile with XLA for faster GPU execution
+            self.generator.compile(loss="mean_absolute_error", optimizer=Adam(learning_rate=0.0002, beta_1=0.5, beta_2=0.999), jit_compile=True)
         else:
             self.generator = self.define_generator()
 

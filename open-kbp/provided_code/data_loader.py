@@ -14,13 +14,20 @@ from provided_code.utils import get_paths, load_file
 class DataLoader:
     """Loads OpenKBP csv data in structured format for dose prediction models."""
 
-    def __init__(self, patient_paths: List[Path], batch_size: int = 2):
+    def __init__(self, patient_paths: List[Path], batch_size: int = 2, cache_data: bool = True):
         """
         :param patient_paths: list of the paths where data for each patient is stored
         :param batch_size: the number of data points to lead in a single batch
+        :param cache_data: if True, pre-load and pre-shape all data into RAM for faster training
         """
         self.patient_paths = patient_paths
         self.batch_size = batch_size
+        self.cache_data = cache_data
+        self._data_cache: Dict[str, dict] = {}  # Cache for raw data
+        self._shaped_cache: Dict[str, Dict[str, NDArray]] = {}  # Cache for pre-shaped tensors
+        # Pre-stacked arrays for fast batch slicing (eliminates Python loop overhead)
+        self._stacked_data: Dict[str, NDArray] = {}
+        self._patient_to_idx: Dict[str, int] = {}
 
         # Light processing of attributes
         self.paths_by_patient_id = {patient_path.stem: patient_path for patient_path in self.patient_paths}
@@ -68,10 +75,35 @@ class DataLoader:
             raise ValueError(f"Mode `{mode}` does not exist. Mode must be either training_model, prediction, predicted_dose, or evaluation")
         self.required_files = self.data_shapes.from_data_names(required_data)
 
+        # Pre-load and pre-shape all data if caching is enabled
+        if self.cache_data and not self._stacked_data:
+            self._preload_and_shape_all_data()
+
     def _force_batch_size_one(self) -> None:
         if self.batch_size != 1:
             self.batch_size = 1
             Warning("Batch size has been changed to 1 for dose prediction mode")
+
+    def _preload_and_shape_all_data(self) -> None:
+        """Pre-load all patient data into stacked arrays for instant batch slicing."""
+        n_patients = len(self.patient_paths)
+        print(f"Pre-loading and stacking {n_patients} patients into memory...")
+
+        # First pass: load all data and build patient index
+        all_shaped: List[Dict[str, NDArray]] = []
+        for idx, patient_path in enumerate(tqdm(self.patient_paths, desc="Loading data")):
+            patient_id = patient_path.stem
+            self._patient_to_idx[patient_id] = idx
+            raw_data = self._load_data_from_disk(patient_path)
+            shaped = {key: self.shape_data(key, raw_data) for key in self.required_files}
+            all_shaped.append(shaped)
+
+        # Second pass: stack into contiguous arrays (one per data type)
+        print("Stacking into contiguous arrays...")
+        for key in self.required_files:
+            self._stacked_data[key] = np.stack([s[key] for s in all_shaped], axis=0)
+
+        print(f"Data stacked. Shape per key: {[(k, v.shape) for k, v in self._stacked_data.items()]}")
 
     def shuffle_data(self) -> None:
         np.random.shuffle(self.patient_paths)
@@ -79,12 +111,25 @@ class DataLoader:
     def prepare_data(self, file_paths_to_load: List[Path]) -> DataBatch:
         """Prepares data containing samples in batch so that they are loaded in the proper shape: (n_samples, *dim, n_channels)"""
 
+        patient_ids = [patient_path.stem for patient_path in file_paths_to_load]
+
+        # Fast path: use pre-stacked arrays with direct slicing (no Python loops)
+        if self.cache_data and self._stacked_data:
+            indices = [self._patient_to_idx[pid] for pid in patient_ids]
+            batch_data = DataBatch(
+                patient_list=patient_ids,
+                patient_path_list=file_paths_to_load,
+                structure_mask_names=self.full_roi_list,
+                **{key: self._stacked_data[key][indices] for key in self.required_files}
+            )
+            return batch_data
+
+        # Fallback: compute on the fly (used when caching disabled)
         batch_data = DataBatch.initialize_from_required_data(self.required_files, self.batch_size)
-        batch_data.patient_list = [patient_path.stem for patient_path in file_paths_to_load]
+        batch_data.patient_list = patient_ids
         batch_data.patient_path_list = file_paths_to_load
         batch_data.structure_mask_names = self.full_roi_list
 
-        # Populate batch with requested data
         for index, patient_path in enumerate(file_paths_to_load):
             raw_data = self.load_data(patient_path)
             for key in self.required_files:
@@ -93,15 +138,26 @@ class DataLoader:
         return batch_data
 
     def load_data(self, path_to_load: Path) -> Union[NDArray, dict[str, NDArray]]:
-        """Load data in its raw form."""
+        """Load data, using cache if available."""
+        patient_id = path_to_load.stem
+        if self.cache_data and patient_id in self._data_cache:
+            return self._data_cache[patient_id]
+        return self._load_data_from_disk(path_to_load)
+
+    def _load_data_from_disk(self, path_to_load: Path) -> Union[NDArray, dict[str, NDArray]]:
+        """Load data in its raw form from disk."""
         data = {}
         if path_to_load.is_dir():
             files_to_load = get_paths(path_to_load)
             for file_path in files_to_load:
-                is_required = file_path.stem in self.required_files
-                is_required_roi = file_path.stem in self.full_roi_list
-                if is_required or is_required_roi:
+                # Load all files when caching, or only required files otherwise
+                if self.cache_data:
                     data[file_path.stem] = load_file(file_path)
+                else:
+                    is_required = file_path.stem in self.required_files
+                    is_required_roi = file_path.stem in self.full_roi_list
+                    if is_required or is_required_roi:
+                        data[file_path.stem] = load_file(file_path)
         else:
             data[self.mode_name] = load_file(path_to_load)
 

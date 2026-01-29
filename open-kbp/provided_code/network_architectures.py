@@ -5,6 +5,7 @@ from tensorflow.keras.layers import (
     Activation, AveragePooling3D, Conv3D, Conv3DTranspose,
     Input, LeakyReLU, SpatialDropout3D, Concatenate, BatchNormalization
 )
+import tensorflow as tf
 from tensorflow.keras.models import Model
 
 # Type aliases for Keras 3 compatibility
@@ -74,14 +75,15 @@ class DefineDoseFromCT:
         x2b = self.make_convolution_transpose_block(x3b, 2 * self.initial_number_of_filters, skip_x=x3)
         x1b = self.make_convolution_transpose_block(x2b, self.initial_number_of_filters, use_dropout=False, skip_x=x2)
 
-        # Final layer
+        # Final layer (cast to float32 for numerical stability with mixed precision)
         x0b = Concatenate()([x1b, x1])
         x0b = Conv3DTranspose(1, self.filter_size, strides=self.stride_size, padding="same")(x0b)
         x_final = AveragePooling3D((3, 3, 3), strides=(1, 1, 1), padding="same")(x0b)
-        final_dose = Activation("relu")(x_final)
+        x_final = Activation("relu")(x_final)
+        final_dose = tf.cast(x_final, tf.float32)
 
-        # Compile model for use
+        # Compile model for use with XLA for faster GPU execution
         generator = Model(inputs=[ct_image, roi_masks], outputs=final_dose, name="generator")
-        generator.compile(loss="mean_absolute_error", optimizer=self.gen_optimizer)
+        generator.compile(loss="mean_absolute_error", optimizer=self.gen_optimizer, jit_compile=True)
         generator.summary()
         return generator

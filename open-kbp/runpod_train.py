@@ -37,7 +37,7 @@ def main():
     print(f"OpenKBP Training - {prediction_name}")
     print(f"=" * 60)
 
-    # Check for GPU
+    # Configure GPU with optimizations
     try:
         import tensorflow as tf
         gpus = tf.config.list_physical_devices('GPU')
@@ -46,10 +46,13 @@ def main():
             # Allow memory growth to avoid OOM
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
+            # Enable mixed precision for ~2x speedup on RTX 3090/4090
+            tf.keras.mixed_precision.set_global_policy('mixed_float16')
+            print("Mixed precision (float16) enabled for faster training")
         else:
             print("WARNING: No GPU detected, training will be slow!")
     except Exception as e:
-        print(f"GPU check failed: {e}")
+        print(f"GPU config failed: {e}")
 
     # Define project directories - works for both local and RunPod
     primary_directory = Path(__file__).parent.resolve()
