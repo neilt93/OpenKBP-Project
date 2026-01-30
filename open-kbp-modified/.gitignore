@@ -1,0 +1,25 @@
+# Data files (too large for git)
+train_data.npz
+provided-data/
+*.zip
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Results (models are large)
+results/
+*.keras
+*.h5

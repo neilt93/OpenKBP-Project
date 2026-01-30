@@ -7,48 +7,44 @@
 - GPU: RTX 3090 or RTX 4090 (24GB VRAM)
 - Disk: 50GB (for data + models)
 
-### 2. Clone Repo
+### 2. Clone Original Repo (has data)
 ```bash
 cd /workspace
-git clone https://github.com/neilt93/OpenKBP-Project.git
-cd OpenKBP-Project/open-kbp-modified
+git clone https://github.com/ababier/open-kbp.git
+cd open-kbp
 ```
 
-### 3. Install Dependencies
+### 3. Upload Code Update from Local Machine
+
+**On your Mac:**
 ```bash
-pip install tensorflow numpy pandas scipy matplotlib tqdm h5py scikit-learn more_itertools
+cd "/Users/neiltripathi/Documents/OpenKBP Project/open-kbp-modified"
+runpodctl send code-update.zip
 ```
 
-### 4. Upload Data
-The `provided-data/` folder (~2GB) is not in git. Transfer it using one of:
-
-**Option A: runpodctl (recommended for large files)**
+**On RunPod (use the code it gives you):**
 ```bash
-# On your local machine:
-runpodctl send provided-data.zip
-
-# On RunPod (copy the command it gives you):
-runpodctl receive <code>
-unzip provided-data.zip -d /workspace/OpenKBP-Project/open-kbp-modified/
+cd /workspace/open-kbp
+runpodctl receive <CODE>
+python -c "import zipfile; zipfile.ZipFile('code-update.zip').extractall('.')"
 ```
 
-**Option B: Direct from original repo**
+### 4. Install Dependencies
 ```bash
-cd /workspace
-git clone https://github.com/ababier/open-kbp.git open-kbp-original
-cp -r open-kbp-original/provided-data /workspace/OpenKBP-Project/open-kbp-modified/
-rm -rf open-kbp-original
+# IMPORTANT: Use TensorFlow 2.16.1 to match RunPod's cuDNN 9.1.0
+pip uninstall tensorflow -y 2>/dev/null
+pip install pandas numpy scipy tensorflow==2.16.1 tqdm more_itertools
 ```
 
 ### 5. Run Training
 ```bash
-cd /workspace/OpenKBP-Project/open-kbp-modified
+cd /workspace/open-kbp
 
-# Default: 64 filters, 100 epochs
-python runpod_train.py
+# Full optimized config (use --no-jit to avoid cuDNN version issues)
+python runpod_train.py --filters 64 --epochs 100 --use-se --use-dvh --use-aug --batch-size 2 --no-jit
 
-# Custom configuration
-python runpod_train.py --filters 64 --epochs 100 --save-freq 10
+# Baseline (matches original Colab)
+python test_baseline.py --filters 64 --epochs 100
 ```
 
 ## CLI Options
@@ -83,7 +79,16 @@ runpodctl receive <code>
 
 ## Troubleshooting
 
-**OOM Error**: Reduce batch size in `provided_code/data_loader.py` or use smaller filters.
+**cuDNN Version Mismatch** (e.g., `Loaded runtime CuDNN library: 9.1.0 but source was compiled with: 9.3.0`):
+```bash
+pip uninstall tensorflow -y
+pip install tensorflow==2.16.1
+```
+
+**OOM Error**: Reduce batch size or use smaller filters:
+```bash
+python runpod_train.py --filters 32 --batch-size 1 --no-jit
+```
 
 **No GPU**: Check with `nvidia-smi`. Ensure TensorFlow sees GPU:
 ```python

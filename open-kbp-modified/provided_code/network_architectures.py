@@ -16,6 +16,7 @@ OptimizerV2 = Any
 from provided_code.data_shapes import DataShapes
 
 
+@tf.keras.utils.register_keras_serializable(package='OpenKBP')
 class InstanceNormalization(Layer):
     """Instance Normalization layer - normalizes per sample per channel.
 
@@ -93,14 +94,11 @@ class DefineDoseFromCT:
         se = GlobalAveragePooling3D()(x)
 
         # Excitation: FC -> ReLU -> FC -> Sigmoid
-        se = Dense(hidden_units, use_bias=False)(se)
-        se = Activation('relu')(se)
-        se = Dense(filters, use_bias=False)(se)
-
-        # Sigmoid with float32 for numerical stability in mixed precision
-        se = tf.cast(se, tf.float32)
-        se = Activation('sigmoid')(se)
-        se = tf.cast(se, x.dtype)
+        # Use dtype="float32" for numerical stability in mixed precision (Keras 3 compatible)
+        se = Dense(hidden_units, use_bias=False, dtype="float32")(se)
+        se = Activation('relu', dtype="float32")(se)
+        se = Dense(filters, use_bias=False, dtype="float32")(se)
+        se = Activation('sigmoid', dtype="float32")(se)
 
         # Scale: broadcast and multiply
         se = Reshape((1, 1, 1, filters))(se)

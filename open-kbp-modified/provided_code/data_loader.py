@@ -19,17 +19,19 @@ class DataLoader:
     CT_MAX = 3000.0    # Maximum CT value (HU) - clips high-density materials
     DOSE_PRESCRIPTION = 70.0  # Prescription dose in Gy for normalization
 
-    def __init__(self, patient_paths: List[Path], batch_size: int = 2, cache_data: bool = True, normalize: bool = True):
+    def __init__(self, patient_paths: List[Path], batch_size: int = 2, cache_data: bool = True, normalize: bool = True, precomputed_path: Optional[Path] = None):
         """
         :param patient_paths: list of the paths where data for each patient is stored
         :param batch_size: the number of data points to lead in a single batch
         :param cache_data: if True, pre-load and pre-shape all data into RAM for faster training
         :param normalize: if True, normalize CT to [0,1] and dose by prescription dose
+        :param precomputed_path: if provided, load stacked data from .npz file instead of CSVs
         """
         self.patient_paths = patient_paths
         self.batch_size = batch_size
         self.cache_data = cache_data
         self.normalize = normalize
+        self.precomputed_path = precomputed_path
         self._data_cache: Dict[str, dict] = {}  # Cache for raw data
         self._shaped_cache: Dict[str, Dict[str, NDArray]] = {}  # Cache for pre-shaped tensors
         # Pre-stacked arrays for fast batch slicing (eliminates Python loop overhead)
@@ -84,12 +86,26 @@ class DataLoader:
 
         # Pre-load and pre-shape all data if caching is enabled
         if self.cache_data and not self._stacked_data:
-            self._preload_and_shape_all_data()
+            if self.precomputed_path and self.precomputed_path.exists():
+                self._load_from_precomputed()
+            else:
+                self._preload_and_shape_all_data()
 
     def _force_batch_size_one(self) -> None:
         if self.batch_size != 1:
             self.batch_size = 1
             Warning("Batch size has been changed to 1 for dose prediction mode")
+
+    def _load_from_precomputed(self) -> None:
+        """Load pre-stacked data from .npz file for instant startup."""
+        print(f"Loading precomputed data from {self.precomputed_path}...")
+        data = np.load(self.precomputed_path)
+        for key in data.files:
+            self._stacked_data[key] = data[key]
+        # Build patient index from patient_paths order
+        for idx, patient_path in enumerate(self.patient_paths):
+            self._patient_to_idx[patient_path.stem] = idx
+        print(f"Loaded precomputed data. Shape per key: {[(k, v.shape) for k, v in self._stacked_data.items()]}")
 
     def _preload_and_shape_all_data(self) -> None:
         """Pre-load all patient data into stacked arrays for instant batch slicing."""

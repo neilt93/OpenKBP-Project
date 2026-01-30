@@ -48,12 +48,15 @@ def main():
     parser.add_argument('--use-dvh', action='store_true', help='Enable DVH-aware loss function')
     parser.add_argument('--dvh-weight', type=float, default=0.1, help='DVH loss weight (default: 0.1)')
     parser.add_argument('--use-aug', action='store_true', help='Enable data augmentation (flips, intensity scaling)')
+    parser.add_argument('--no-masked-loss', action='store_true', help='Disable masked MAE loss (use unweighted MAE)')
+    parser.add_argument('--ptv-weight', type=float, default=2.0, help='Extra weight on PTV voxels (default: 2.0, 0=no weighting)')
     parser.add_argument('--seed', type=int, default=None, help='Random seed for reproducibility (for ensemble training)')
     parser.add_argument('--no-normalize', action='store_true', help='Disable CT/dose normalization (for testing)')
     parser.add_argument('--no-mixed-precision', action='store_true', help='Disable mixed precision (float16) training')
     parser.add_argument('--no-jit', action='store_true', help='Disable XLA JIT compilation')
     parser.add_argument('--no-cache', action='store_true', help='Disable data caching (match original behavior)')
     parser.add_argument('--batch-size', type=int, default=2, help='Batch size (default: 2, reduce if OOM)')
+    parser.add_argument('--precomputed', type=str, default=None, help='Path to precomputed train_data.npz for instant loading')
     args = parser.parse_args()
 
     # Set random seeds if specified (for ensemble training)
@@ -72,6 +75,8 @@ def main():
         name_parts.append(f"DVH{args.dvh_weight}")
     if args.use_aug:
         name_parts.append("AUG")
+    if not args.no_masked_loss:
+        name_parts.append(f"MASK_PTV{args.ptv_weight}")
     if not args.no_normalize:
         name_parts.append("NORM")
     if args.seed is not None:
@@ -133,10 +138,13 @@ def main():
             features.append(f"DVH loss (weight={args.dvh_weight})")
         if args.use_aug:
             features.append("augmentation")
+        if not args.no_masked_loss:
+            features.append(f"masked loss (PTV weight={args.ptv_weight})")
         feature_str = f" with {', '.join(features)}" if features else ""
         print(f"\nStarting training: {num_filters} filters, {num_epochs} epochs{feature_str}")
 
-        data_loader_train = DataLoader(training_plan_paths, batch_size=args.batch_size, normalize=not args.no_normalize, cache_data=not args.no_cache)
+        precomputed_path = Path(args.precomputed) if args.precomputed else None
+        data_loader_train = DataLoader(training_plan_paths, batch_size=args.batch_size, normalize=not args.no_normalize, cache_data=not args.no_cache, precomputed_path=precomputed_path)
         dose_prediction_model_train = PredictionModel(
             data_loader_train, results_dir, prediction_name, "train", num_filters,
             use_se_blocks=args.use_se,
@@ -144,6 +152,8 @@ def main():
             dvh_weight=args.dvh_weight,
             use_augmentation=args.use_aug,
             use_jit=not args.no_jit,
+            use_masked_loss=not args.no_masked_loss,
+            ptv_weight=args.ptv_weight,
         )
         dose_prediction_model_train.train_model(
             epochs=num_epochs,
@@ -203,6 +213,8 @@ def main():
         "use_dvh_loss": args.use_dvh,
         "dvh_weight": args.dvh_weight if args.use_dvh else None,
         "use_augmentation": args.use_aug,
+        "use_masked_loss": not args.no_masked_loss,
+        "ptv_weight": args.ptv_weight if not args.no_masked_loss else None,
         "normalize": not args.no_normalize,
         "seed": args.seed,
         "dvh_score": float(dvh_score),

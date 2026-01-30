@@ -35,7 +35,7 @@ class DoseEvaluator:
         """Calculate the  dose and DVH scores for the "new_dose" relative to the "reference_dose"""
         if not self.reference_data_loader.patient_paths:
             raise ValueError("No reference patient data was provided, so no metrics can be calculated")
-        if self.prediction_loader:
+        if not self.prediction_loader:
             Warning("No predicted dose loader was provided. Metrics were only calculated for the reference dose.")
         self._set_data_loader_mode()
 

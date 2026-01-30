@@ -1,12 +1,67 @@
-# OpenKBP Grand Challenge 
+# OpenKBP Dose Prediction (Modified)
 
 ![](read-me-images/aapm.png)
-  
-The _open-kbp_ repository provides code that was intended to help get participants started with developing dose prediction models for the OpenKBP Challenge, which is summarized in our [paper](https://aapm.onlinelibrary.wiley.com/doi/epdf/10.1002/mp.14845). This repository has been repurposed to provide our community with an open framework for developing dose prediction methods. Note that researchers who are interested in developing their own plan optimization methods should refer to the [open-kbp-opt repository](https://github.com/ababier/open-kbp-opt).
+
+Fork of the [OpenKBP Grand Challenge](https://github.com/ababier/open-kbp) repository with optimized 3D U-Net architecture for radiotherapy dose prediction.
+
+## Results
+
+| Model | DVH Score | Dose Score | Notes |
+|-------|-----------|------------|-------|
+| **This repo (best)** | **2.563** | **3.856** | SE blocks, augmentation, PTV weighting |
+| Original baseline | 11.481 | 7.180 | Unmodified code |
+| Competition winner | 1.478 | 2.429 | Ensemble + cascade |
+
+**78% improvement** over baseline DVH score.
+
+## Quick Start (RunPod)
+
+```bash
+# Clone and setup
+cd /workspace && git clone https://github.com/ababier/open-kbp.git && cd open-kbp
+pip install tensorflow==2.16.1 pandas numpy scipy tqdm more_itertools
+
+# Train best config (~2 hours on RTX 3090)
+python runpod_train.py --filters 64 --epochs 100 --use-se --use-aug --batch-size 4 --ptv-weight 4.0 --no-jit
+```
+
+See [RUNPOD_SETUP.md](RUNPOD_SETUP.md) for detailed instructions.
+
+## Key Improvements
+
+1. **InstanceNormalization** - Better than BatchNorm for small batch sizes (1-2)
+2. **Squeeze-and-Excitation (SE) Blocks** - Channel attention on deep layers
+3. **Residual Connections** - In encoder and decoder blocks
+4. **Masked MAE Loss** - Only compute loss in possible_dose_mask region
+5. **PTV Weighting** - 5x weight on target structures (`--ptv-weight 4.0`)
+6. **Data Augmentation** - LR/AP flips, CT intensity scaling
+7. **Mixed Precision (float16)** - 2x training speedup
+8. **Data Caching** - Pre-stack patients for instant batch slicing
+
+## CLI Options
+
+```bash
+python runpod_train.py [OPTIONS]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--filters` | 64 | Initial U-Net filters |
+| `--epochs` | 100 | Training epochs |
+| `--use-se` | off | Enable SE attention blocks |
+| `--use-aug` | off | Enable data augmentation |
+| `--ptv-weight` | 2.0 | Extra weight on PTV voxels |
+| `--batch-size` | 2 | Batch size |
+| `--no-jit` | off | Disable XLA JIT (needed for some GPUs) |
+| `--seed` | None | Random seed for ensemble training |
+
+---
+
+## Original README
 
  ![](read-me-images/pipeline.png)
 
-**Advice**: The repository can be used on either a local machine or in the cloud (for free) using [Google Colab](https://colab.research.google.com). Google Colab is a great way to compete in OpenKBP without putting a burden on your existing hardware. The service provides high-quality CPUs and GPUs for free, however, your sessions are limited to consecutive 12 hours [[Frequently asked questions]](https://research.google.com/colaboratory/faq.html). 
+The original _open-kbp_ repository provides code for the OpenKBP Challenge, summarized in the [paper](https://aapm.onlinelibrary.wiley.com/doi/epdf/10.1002/mp.14845). 
 
 ## Citation
 Please use our paper as the citation for this dataset or code repository:
