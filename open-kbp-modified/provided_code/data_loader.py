@@ -14,9 +14,10 @@ from provided_code.utils import get_paths, load_file
 class DataLoader:
     """Loads OpenKBP csv data in structured format for dose prediction models."""
 
-    # Normalization constants (based on OpenKBP winning team practices)
-    CT_MIN = 0.0       # Minimum CT value (HU)
-    CT_MAX = 3000.0    # Maximum CT value (HU) - clips high-density materials
+    # Normalization constants (per OpenKBP data-description.pdf)
+    # Dataset has mix of 12-bit and 16-bit CT; official recommendation: clip to [0, 4095]
+    CT_MIN = 0.0       # Minimum CT value (HU, already shifted positive)
+    CT_MAX = 4095.0    # 12-bit max value per official docs
     DOSE_PRESCRIPTION = 70.0  # Prescription dose in Gy for normalization
 
     def __init__(self, patient_paths: List[Path], batch_size: int = 2, cache_data: bool = True, normalize: bool = True, precomputed_path: Optional[Path] = None):
@@ -205,7 +206,7 @@ class DataLoader:
         # Apply normalization if enabled
         if self.normalize:
             if key == "ct":
-                # CT normalization: clip to [0, 3000] HU and scale to [0, 1]
+                # CT normalization: clip to [0, 4095] and scale to [0, 1]
                 shaped_data = np.clip(shaped_data, self.CT_MIN, self.CT_MAX)
                 shaped_data = shaped_data / self.CT_MAX
             elif key in ("dose", "predicted_dose"):
