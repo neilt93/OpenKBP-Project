@@ -1,0 +1,88 @@
+# OpenKBP H&N CT Perturbation Robustness Pipeline — Default Configuration
+
+seed: 42
+
+# Paths (relative to open-kbp-modified/)
+paths:
+  validation_data: "provided-data/validation-pats"
+  model: "results/64filter_100epoch_SE_AUG_MASK_PTV4.0_NORM/models/epoch_100.keras"
+  output_root: "openkbp_hn_robustness"
+  data_perturbed: "openkbp_hn_robustness/data_perturbed"
+  predictions: "openkbp_hn_robustness/predictions"
+  metrics: "openkbp_hn_robustness/metrics"
+  figures: "openkbp_hn_robustness/figures"
+
+# Patient range (validation set)
+patients:
+  start: 201
+  end: 240
+
+# Perturbation definitions
+perturbations:
+  P1_noise:
+    enabled: true
+    class: AcquisitionNoise
+    levels:
+      L1:
+        sigma_soft: 8.0
+        sigma_bone: 12.0
+      L2:
+        sigma_soft: 15.0
+        sigma_bone: 25.0
+
+  P2_bone_shift:
+    enabled: true
+    class: BoneWeightedShift
+    levels:
+      L1:
+        shift_soft: 5.0
+        shift_bone: 50.0
+      L2:
+        shift_soft: 10.0
+        shift_bone: 100.0
+
+  P3_bias_field:
+    enabled: true
+    class: BiasField
+    levels:
+      L1:
+        amplitude: 10.0
+        n_harmonics: 3
+      L2:
+        amplitude: 20.0
+        n_harmonics: 3
+
+  P4_resolution:
+    enabled: true
+    class: ResolutionDegradation
+    levels:
+      L1:
+        sigma_z: 1.0
+        sigma_xy: 0.5
+      L2:
+        sigma_z: 2.0
+        sigma_xy: 1.0
+
+  P5_dental:
+    enabled: true
+    class: DentalArtifact
+    levels:
+      L1:
+        amplitude: 150.0
+        n_streaks: 8
+        metal_spot_hu: 3000.0
+      L2:
+        amplitude: 300.0
+        n_streaks: 12
+        metal_spot_hu: 3500.0
+
+# Model inference settings
+inference:
+  batch_size: 1
+  normalize: true
+  ct_max: 4095.0
+  dose_prescription: 70.0
+
+# Evaluation settings
+evaluation:
+  normalize: false  # Predictions and ground truth both in Gy

@@ -29,5 +29,13 @@ results/
 *-predictions/
 submissions/
 
+# Robustness pipeline generated data (regenerable)
+**/data_perturbed/
+**/predictions/
+**/metrics/
+**/figures/
+**/logs/
+*.tar.gz
+
 # Claude config
 .claude/
