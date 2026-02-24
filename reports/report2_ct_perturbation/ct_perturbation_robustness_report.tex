@@ -1,0 +1,326 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{siunitx}
+\usepackage{tabularx}
+
+\title{Robustness of 3D U-Net Dose Prediction to\\Clinically Plausible CT Perturbations}
+\author{OpenKBP Project}
+\date{February 22, 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+We evaluate the robustness of a 3D U-Net dose prediction model to five families of clinically plausible CT perturbations: acquisition noise, HU calibration shift, low-frequency bias field, resolution degradation, and dental metal artifacts. Unlike adversarial attacks that exploit worst-case gradient directions, these perturbations model realistic imaging variability encountered in radiotherapy workflows. Evaluated on 40 head-and-neck cancer patients at two severity levels each, the model demonstrates remarkable stability: four of five perturbation families cause less than 0.5\% degradation in DVH score. Only resolution degradation produces meaningful impact (+4.0\% DVH at Level~1, +7.7\% at Level~2), indicating that CT spatial resolution is the dominant factor affecting dose prediction accuracy among realistic imaging variations.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+\subsection{Clinical Motivation}
+
+CT imaging serves as the foundation of radiotherapy treatment planning. In clinical practice, CT images vary due to scanner hardware differences, acquisition protocols, reconstruction parameters, patient-specific artifacts (e.g., dental implants), and normal quantum noise. A dose prediction model deployed across clinical sites must produce stable predictions despite this inherent imaging variability.
+
+\subsection{Relationship to Adversarial Evaluation}
+
+A companion report (Report~1) evaluates the same model under adversarial attacks (FGSM, PGD) that exploit worst-case gradient directions to maximally degrade predictions. Those attacks revealed 21--30\% dose score degradation at $\epsilon = 0.01$ ($\approx$41~HU). This report takes a complementary approach: instead of worst-case perturbations, we apply \emph{physically motivated} perturbations that model realistic CT imaging variability. This distinction is critical for clinical deployment---adversarial robustness measures theoretical vulnerability, while perturbation robustness measures practical reliability.
+
+\subsection{Model Overview}
+
+The evaluated model is a 3D U-Net with Squeeze-and-Excitation (SE) blocks, trained on the OpenKBP dataset for head-and-neck radiotherapy dose prediction:
+\begin{itemize}
+    \item \textbf{Architecture}: 3D U-Net, 6 encoder / 5 decoder stages (64--512 filters), SE blocks on deep layers, InstanceNorm, residual connections
+    \item \textbf{Input}: CT volume (128$^3$) + 10 structure masks
+    \item \textbf{Output}: Predicted dose distribution (128$^3$)
+    \item \textbf{Training}: Masked MAE loss, PTV weighting (4.0$\times$), data augmentation, mixed precision
+    \item \textbf{Baseline performance}: DVH Score 2.535, Dose Score 3.731~Gy
+\end{itemize}
+
+\section{Methods}
+
+\subsection{Perturbation Families}
+
+We define five perturbation families spanning the major sources of CT imaging variability in radiotherapy. Each family is tested at two severity levels (L1: mild/typical, L2: moderate/worst-case plausible). Table~\ref{tab:perturbations} summarizes all perturbations and their parameters.
+
+\begin{table}[H]
+\centering
+\caption{CT perturbation families with parameters at each severity level. All values in HU (Hounsfield Units) or voxels as indicated.}
+\label{tab:perturbations}
+\small
+\begin{tabularx}{\textwidth}{@{}l l X X@{}}
+\toprule
+\textbf{Perturbation} & \textbf{Physical Model} & \textbf{L1 (Mild)} & \textbf{L2 (Moderate)} \\
+\midrule
+P1: Acq.\ Noise & Heteroscedastic Gaussian & $\sigma_\text{soft}{=}8$, $\sigma_\text{bone}{=}12$\,HU & $\sigma_\text{soft}{=}15$, $\sigma_\text{bone}{=}25$\,HU \\[4pt]
+P2: Bone Shift & HU calibration error & $\Delta_\text{soft}{=}5$, $\Delta_\text{bone}{=}50$\,HU & $\Delta_\text{soft}{=}10$, $\Delta_\text{bone}{=}100$\,HU \\[4pt]
+P3: Bias Field & Low-freq.\ cosine harmonics & amp${=}10$\,HU, 3 harmonics & amp${=}20$\,HU, 3 harmonics \\[4pt]
+P4: Resolution & Anisotropic Gaussian blur & $\sigma_z{=}1.0$, $\sigma_{xy}{=}0.5$\,vox & $\sigma_z{=}2.0$, $\sigma_{xy}{=}1.0$\,vox \\[4pt]
+P5: Dental Art. & Radial streak pattern & amp${=}150$\,HU, 8 streaks & amp${=}300$\,HU, 12 streaks \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsubsection{P1: Acquisition Noise}
+
+Models heteroscedastic quantum noise with tissue-dependent variance. The noise standard deviation is higher in bone ($\sigma_\text{bone}$) than in soft tissue ($\sigma_\text{soft}$), reflecting the physics of photon attenuation:
+\begin{equation}
+\text{CT}_\text{perturbed} = \text{CT} + \mathcal{N}(0, \sigma(x)^2), \quad \sigma(x) = \begin{cases} \sigma_\text{bone} & \text{if CT}(x) > 1500 \\ \sigma_\text{soft} & \text{otherwise} \end{cases}
+\end{equation}
+where 1500 corresponds to the cortical bone threshold in OpenKBP coordinates ($\approx$476 standard HU). At L1, noise magnitudes (8--12~HU) are within typical CT scanner noise ranges (10--50~HU); at L2, the 25~HU bone noise represents a noisier acquisition.
+
+\subsubsection{P2: Bone-Weighted HU Calibration Shift}
+
+Simulates systematic HU calibration drift that affects bone and soft tissue differently, as occurs with CT tube aging or cross-scanner variation. A sigmoid function provides smooth blending:
+\begin{equation}
+\Delta(x) = s \cdot \left[\Delta_\text{soft} + (\Delta_\text{bone} - \Delta_\text{soft}) \cdot \frac{1}{1 + e^{-(\text{CT}(x)-1500)/200}}\right], \quad s \sim \text{Uniform}\{-1, +1\}
+\end{equation}
+The random sign $s$ models bidirectional calibration error. The sigmoid transition (center 1500, width 200) prevents discontinuities at tissue boundaries.
+
+\subsubsection{P3: Low-Frequency Bias Field}
+
+Models spatially smooth intensity variations from RF non-uniformity or scatter:
+\begin{equation}
+B(x,y,z) = A \cdot \frac{\sum_{k=1}^{K} w_k \prod_{d \in \{x,y,z\}} \cos(2\pi f_{k,d} \cdot d + \phi_{k,d})}{\max|B|}
+\end{equation}
+where $K=3$ harmonics with random frequencies $f \in [0.5, 2.5]$ cycles per FOV, phases $\phi \in [0, 2\pi)$, and weights $w \in [0.3, 1.0]$. The amplitude $A$ controls the maximum HU deviation.
+
+\subsubsection{P4: Resolution Degradation}
+
+Models reduced spatial resolution from thicker CT slices or smoother reconstruction kernels via anisotropic Gaussian blurring:
+\begin{equation}
+\text{CT}_\text{perturbed} = \text{CT} * G(\sigma_z, \sigma_{xy}, \sigma_{xy})
+\end{equation}
+where $G$ is a 3D Gaussian kernel applied with \texttt{scipy.ndimage.gaussian\_filter}. The z-axis receives stronger blur than the xy-plane, reflecting the typical anisotropy of CT acquisitions where slice spacing exceeds in-plane resolution.
+
+\subsubsection{P5: Dental Metal Artifact}
+
+Simulates streak artifacts from dental implants anchored to the mandible centroid. The artifact consists of radial streaks in the axial plane with exponential radial decay and Gaussian z-spread:
+\begin{equation}
+\text{streak}(\theta) = \sum_{i=1}^{N} (-1)^i \exp\!\left(-\frac{(\theta - \theta_i)^2}{2w^2}\right), \quad w = \frac{\pi}{1.5N}
+\end{equation}
+where $N$ is the number of streaks and $\theta_i$ are random angles. The streak pattern is modulated by radial decay $e^{-r/40}$ and z-axis Gaussian decay ($\sigma_z = 3$ slices). A high-HU metal spot (3000--3500~HU) is placed at the mandible centroid within a 3-voxel radius.
+
+\subsection{Experimental Setup}
+
+\begin{itemize}
+    \item \textbf{Dataset}: 40 validation patients (pt\_201--pt\_240) from the OpenKBP dataset
+    \item \textbf{Conditions}: 11 total (1 baseline + 5 perturbations $\times$ 2 levels)
+    \item \textbf{Seeding}: Deterministic (seed 42) for reproducibility; perturbation randomness is per-patient
+    \item \textbf{CT normalization}: [0, 4095] $\rightarrow$ [0, 1] (12-bit range per OpenKBP specification)
+    \item \textbf{Perturbation domain}: Applied in raw HU space before normalization
+    \item \textbf{Hardware}: NVIDIA RTX 3090 GPU (RunPod), TensorFlow 2.18.0
+\end{itemize}
+
+\subsection{Evaluation Metrics}
+
+\begin{itemize}
+    \item \textbf{Dose Score}: Voxel-wise MAE (Gy) within the \texttt{possible\_dose\_mask} region
+    \item \textbf{DVH Score}: Mean absolute error of DVH statistics ($D_{0.1\text{cc}}$, mean dose for OARs; $D_1$, $D_{95}$, $D_{99}$ for PTVs) across all structures
+    \item \textbf{Delta}: Absolute and percentage change from baseline for both metrics
+\end{itemize}
+
+Evaluation uses the OpenKBP \texttt{DoseEvaluator} class with unnormalized (Gy) dose values for both reference and prediction.
+
+\section{Results}
+
+\subsection{Summary}
+
+Table~\ref{tab:results} presents the complete results across all 11 conditions. The model achieves baseline performance of 3.731~Gy dose score and 2.535 DVH score.
+
+\begin{table}[H]
+\centering
+\caption{Dose and DVH scores across all perturbation conditions. $\Delta$ columns show change from baseline.}
+\label{tab:results}
+\small
+\begin{tabular}{@{}lS[table-format=1.3]S[table-format=1.3]S[table-format=+1.2]S[table-format=+1.2]@{}}
+\toprule
+\textbf{Condition} & {\textbf{Dose (Gy)}} & {\textbf{DVH}} & {$\boldsymbol{\Delta}$\textbf{Dose (\%)}} & {$\boldsymbol{\Delta}$\textbf{DVH (\%)}} \\
+\midrule
+Baseline & 3.731 & 2.535 & {---} & {---} \\
+\midrule
+P1\_noise / L1 & 3.731 & 2.535 & +0.01 & +0.01 \\
+P1\_noise / L2 & 3.733 & 2.538 & +0.07 & +0.13 \\
+\midrule
+P2\_bone\_shift / L1 & 3.730 & 2.531 & -0.02 & -0.15 \\
+P2\_bone\_shift / L2 & 3.740 & 2.544 & +0.26 & +0.38 \\
+\midrule
+P3\_bias\_field / L1 & 3.732 & 2.535 & +0.03 & +0.01 \\
+P3\_bias\_field / L2 & 3.730 & 2.534 & -0.01 & -0.04 \\
+\midrule
+P4\_resolution / L1 & 3.780 & 2.636 & +1.32 & \bfseries +4.00 \\
+P4\_resolution / L2 & 3.885 & 2.729 & \bfseries +4.14 & \bfseries +7.67 \\
+\midrule
+P5\_dental / L1 & 3.729 & 2.541 & -0.05 & +0.26 \\
+P5\_dental / L2 & 3.730 & 2.545 & -0.03 & +0.42 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Score Degradation Overview}
+
+Figure~\ref{fig:summary_bars} shows the dose and DVH score degradation across all conditions. Resolution degradation (P4) is visually dominant; all other perturbations are near-zero.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/summary_bars.pdf}
+\caption{Dose score (left) and DVH score (right) across all perturbation conditions. P4 (resolution degradation) is the only perturbation producing visible degradation.}
+\label{fig:summary_bars}
+\end{figure}
+
+\subsection{Degradation Curves}
+
+Figure~\ref{fig:curves} plots dose and DVH score as a function of perturbation severity (Baseline $\rightarrow$ L1 $\rightarrow$ L2) for each perturbation family. The curves reveal distinct degradation behaviors:
+\begin{itemize}
+    \item \textbf{P4 (Resolution)}: Steep, roughly linear degradation from Baseline through L1 to L2 in both metrics. The take-off is already visible at L1, indicating the model is sensitive to even mild spatial blurring.
+    \item \textbf{P1--P3, P5}: All four remaining perturbation families remain essentially flat across severity levels, confirming that intensity-domain perturbations do not meaningfully degrade predictions even at moderate severity.
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/degradation_curves.pdf}
+\caption{Degradation curves showing dose score (left) and DVH score (right) as perturbation severity increases from Baseline to L1 to L2. Resolution degradation (P4, orange) shows a steep, approximately linear climb, while all other perturbation families remain flat near baseline.}
+\label{fig:curves}
+\end{figure}
+
+\subsection{Degradation Heatmap}
+
+Figure~\ref{fig:heatmap} provides a per-perturbation breakdown of dose and DVH score deltas, highlighting the contrast between P4 and the remaining perturbations.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{figures/degradation_heatmap.pdf}
+\caption{Heatmap of percentage degradation in dose score and DVH score by perturbation condition. P4/L2 shows +7.7\% DVH degradation; all other cells are below 0.5\%.}
+\label{fig:heatmap}
+\end{figure}
+
+\subsection{Per-Structure Analysis}
+
+Figure~\ref{fig:radar} shows the per-structure DVH metric errors under each perturbation. Resolution degradation particularly affects parotid glands, larynx, and mandible---structures with complex geometry where spatial blurring shifts dose-volume boundaries.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{figures/structure_radar.pdf}
+\caption{Radar chart of per-structure DVH errors across perturbation conditions. Baseline is shown as the reference ring; P4/L2 expands outward on structures with dose gradients near boundaries.}
+\label{fig:radar}
+\end{figure}
+
+\subsection{Visual Examples}
+
+Figures~\ref{fig:ct_slices} and \ref{fig:dose_diff} show representative axial CT slices under each perturbation and the corresponding dose difference maps.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ct_slices.pdf}
+\caption{Axial CT slices (coronal view, head at top) for a representative patient under each perturbation at L2. Top row: perturbed CT; bottom row: difference from original. P1 (noise) and P3 (bias field) produce subtle changes; P2 (bone shift) shows intensity shifts in dense structures; P4 (resolution) visibly blurs tissue boundaries; P5 (dental) adds radial streaks near the mandible.}
+\label{fig:ct_slices}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/dose_difference_maps.pdf}
+\caption{Dose predictions (top, coronal view) and difference maps (bottom, perturbed $-$ baseline) for the same patient. P4 (resolution) produces spatially structured dose errors concentrated at organ boundaries, consistent with its dominant impact on DVH metrics.}
+\label{fig:dose_diff}
+\end{figure}
+
+\section{Discussion}
+
+\subsection{Key Findings}
+
+\begin{enumerate}
+    \item \textbf{Robust to intensity-domain perturbations}: P1 (noise), P2 (calibration shift), P3 (bias field), and P5 (dental artifacts) all cause less than 0.5\% DVH degradation, even at L2 severity. The model has learned to extract dose-relevant features that are largely invariant to intensity shifts and additive noise.
+
+    \item \textbf{Sensitive to spatial resolution}: P4 (resolution degradation) is the only perturbation producing meaningful impact: +4.0\% DVH at L1 ($\sigma_z=1.0$, $\sigma_{xy}=0.5$ voxels) and +7.7\% at L2 ($\sigma_z=2.0$, $\sigma_{xy}=1.0$ voxels). The degradation curves (Figure~\ref{fig:curves}) show this sensitivity is \emph{gradual and approximately linear} from L1 to L2, rather than exhibiting a sudden threshold---the take-off is already visible at L1. Blurring degrades the model's ability to localize organ boundaries, which directly affects DVH metric computation.
+
+    \item \textbf{DVH more sensitive than dose score}: Resolution degradation causes +4.0\% DVH degradation but only +1.3\% dose score degradation at L1. DVH metrics, which depend on structure-specific dose statistics, are more sensitive to boundary shifts than voxel-wise MAE.
+
+    \item \textbf{Structure-dependent vulnerability}: Under P4, parotid glands, larynx, and mandible show the largest DVH increases, likely because these structures have steep dose gradients at their boundaries. Structures in low-gradient regions (e.g., spinal cord) are less affected.
+\end{enumerate}
+
+\subsection{Comparison with Adversarial Results (Report~1)}
+
+The contrast between adversarial and physics-based perturbations is striking:
+
+\begin{table}[H]
+\centering
+\caption{Comparison of adversarial attacks (Report~1) vs.\ physics-based perturbations at similar HU magnitudes.}
+\label{tab:comparison}
+\begin{tabular}{@{}lccl@{}}
+\toprule
+\textbf{Perturbation Type} & \textbf{Approx.\ HU} & \textbf{Dose $\Delta$} & \textbf{Nature} \\
+\midrule
+FGSM, $\epsilon=0.01$ & $\sim$41 HU & +30.4\% & Worst-case gradient direction \\
+PGD, $\epsilon=0.01$ & $\sim$41 HU & +21.3\% & Iterative worst-case \\
+P1 noise, L2 & $\sigma=$15--25 HU & +0.07\% & Random Gaussian \\
+P2 bone shift, L2 & 10--100 HU & +0.26\% & Systematic calibration \\
+P3 bias field, L2 & $\pm$20 HU & $-$0.01\% & Smooth spatial field \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At comparable HU magnitudes ($\sim$25--41~HU), adversarial attacks cause 21--30\% dose score degradation, while realistic noise causes $<$0.13\%. This 200$\times$ gap demonstrates that the model is robust to realistic imaging noise but remains theoretically vulnerable to worst-case, gradient-aligned perturbations. For clinical deployment, the perturbation robustness results are more relevant: real-world CT variability does not follow adversarial gradient directions.
+
+\subsection{Clinical Implications}
+
+\begin{itemize}
+    \item \textbf{CT spatial resolution matters most}: Clinical sites using thicker CT slices or smoother reconstruction kernels should expect modest degradation in dose prediction accuracy. Standardizing spatial resolution across sites would be the single most impactful quality control measure.
+    \item \textbf{Intensity variations are well-tolerated}: Scanner calibration differences, noise levels, and even dental metal artifacts have negligible impact on predictions, supporting cross-scanner deployment.
+    \item \textbf{No retraining needed for most variations}: The model's inherent robustness to P1--P3 and P5 suggests that data augmentation or adversarial training is unnecessary for handling typical CT intensity variations.
+\end{itemize}
+
+\subsection{Limitations}
+
+\begin{itemize}
+    \item \textbf{2D perturbation design}: P5 (dental artifact) applies 2D streak patterns extruded along z; real metal artifacts have more complex 3D geometry.
+    \item \textbf{Fixed perturbation parameters}: Each perturbation family uses two pre-defined severity levels; continuous severity sweeps could reveal threshold effects.
+    \item \textbf{Single model}: Results are specific to this architecture and training configuration; other models may have different robustness profiles.
+    \item \textbf{DVH score limitations}: DVH metrics aggregate information across structures; focal dose errors in small regions may be masked by structure-level averaging.
+    \item \textbf{Noise applied per-voxel}: P1 noise is i.i.d.\ per voxel; real CT noise has spatial correlations from reconstruction.
+\end{itemize}
+
+\section{Conclusion}
+
+This evaluation demonstrates that the 3D U-Net dose prediction model is highly robust to clinically plausible CT imaging variations. Among five perturbation families spanning the major sources of CT variability:
+
+\begin{enumerate}
+    \item \textbf{Four of five} perturbation families (noise, calibration shift, bias field, dental artifacts) cause $<$0.5\% DVH degradation, even at moderate severity levels.
+    \item \textbf{Resolution degradation} is the only perturbation producing meaningful impact (+7.7\% DVH at L2), identifying CT spatial resolution as the key factor for clinical quality control.
+    \item The 200$\times$ gap between adversarial and realistic perturbation impacts confirms that the model's adversarial vulnerability (Report~1) does not translate to practical fragility under real imaging conditions.
+\end{enumerate}
+
+These findings support the model's suitability for multi-site clinical deployment, provided that CT spatial resolution is standardized or accounted for in the prediction pipeline.
+
+\section{Reproducibility}
+
+\begin{verbatim}
+# Step 1: Generate perturbed CT volumes
+cd open-kbp-modified/
+python openkbp_hn_robustness/generate_perturbed_data.py
+
+# Step 2: Run inference on all conditions (requires GPU + TF 2.18.0)
+python openkbp_hn_robustness/run_inference.py
+
+# Step 3: Evaluate metrics (CPU only)
+python openkbp_hn_robustness/evaluate_metrics.py
+
+# Step 4: Generate figures
+python openkbp_hn_robustness/visualize_results.py
+\end{verbatim}
+
+Configuration: \texttt{openkbp\_hn\_robustness/configs/default.yaml}
+
+\section*{Acknowledgments}
+
+This work builds upon the OpenKBP Grand Challenge dataset and baseline implementation. Computation performed on RunPod cloud infrastructure with NVIDIA RTX 3090 GPU.
+
+\end{document}

@@ -66,6 +66,62 @@ def load_results(metrics_dir: Path) -> tuple:
     return summary_df, details
 
 
+def plot_degradation_curves(summary_df: pd.DataFrame, figures_dir: Path) -> None:
+    """Line plot: dose/DVH score vs perturbation level for each perturbation type.
+
+    Shows where degradation takes off (gradual vs sudden) per perturbation.
+    """
+    p_names = list(PERTURBATION_LABELS.keys())
+
+    # Get baseline scores
+    baseline_row = summary_df[summary_df["perturbation"] == "baseline"]
+    if baseline_row.empty:
+        print("  Skipping degradation curves (no baseline)")
+        return
+    baseline_dose = baseline_row["dose_score"].iloc[0]
+    baseline_dvh = baseline_row["dvh_score"].iloc[0]
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    levels = ["L1", "L2"]
+    x_positions = [0, 1, 2]
+    x_labels = ["Baseline", "L1", "L2"]
+
+    colors = plt.cm.Set1(np.linspace(0, 0.6, len(p_names)))
+
+    for idx, (metric, baseline_val, ylabel, title) in enumerate([
+        ("dose_score", baseline_dose, "Dose Score (Gy)", "Dose Score Degradation"),
+        ("dvh_score", baseline_dvh, "DVH Score", "DVH Score Degradation"),
+    ]):
+        ax = axes[idx]
+
+        for pi, p_name in enumerate(p_names):
+            scores = [baseline_val]
+            for level in levels:
+                condition = f"{p_name}/{level}"
+                row = summary_df[summary_df["perturbation"] == condition]
+                if not row.empty:
+                    scores.append(row[metric].iloc[0])
+                else:
+                    scores.append(np.nan)
+
+            label = PERTURBATION_LABELS.get(p_name, p_name)
+            ax.plot(x_positions[:len(scores)], scores, 'o-', color=colors[pi],
+                    label=label, linewidth=2, markersize=7)
+
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(x_labels)
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.legend(loc='upper left')
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    fig.savefig(figures_dir / "degradation_curves.png", bbox_inches='tight')
+    fig.savefig(figures_dir / "degradation_curves.pdf", bbox_inches='tight')
+    plt.close(fig)
+    print(f"  Saved degradation_curves.png/pdf")
+
+
 def plot_summary_bars(summary_df: pd.DataFrame, figures_dir: Path) -> None:
     """Bar chart of dose and DVH scores for all conditions."""
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
@@ -258,16 +314,22 @@ def plot_ct_slices(config: dict, figures_dir: Path) -> None:
     p_names = list(PERTURBATION_LABELS.keys())
     n_perturb = len(p_names)
 
-    fig, axes = plt.subplots(2, n_perturb + 1, figsize=(3 * (n_perturb + 1), 6))
+    fig, axes = plt.subplots(2, n_perturb + 1, figsize=(3 * (n_perturb + 1), 8))
+
+    # Rotate slices 90° CCW so anatomy is upright (head at top)
+    def orient(slc):
+        return np.rot90(slc, k=1)
 
     # Original
     for row in range(2):
-        im = axes[row, 0].imshow(original_vol[mid_slice], cmap='gray', vmin=0, vmax=2000)
+        if row == 0:
+            axes[row, 0].imshow(orient(original_vol[mid_slice]), cmap='gray',
+                                vmin=0, vmax=2000, aspect='equal')
+        else:
+            axes[row, 0].imshow(orient(np.zeros_like(original_vol[mid_slice])),
+                                cmap='RdBu_r', vmin=-200, vmax=200, aspect='equal')
         axes[row, 0].set_title("Original" if row == 0 else "Diff")
         axes[row, 0].axis('off')
-        if row == 1:
-            axes[row, 0].imshow(np.zeros_like(original_vol[mid_slice]), cmap='RdBu_r',
-                                vmin=-200, vmax=200)
 
     # Each perturbation (L2)
     for pi, p_name in enumerate(p_names):
@@ -276,9 +338,11 @@ def plot_ct_slices(config: dict, figures_dir: Path) -> None:
 
         if pert_dir.exists():
             pert_vol, _ = load_ct_volume(pert_dir)
-            axes[0, col].imshow(pert_vol[mid_slice], cmap='gray', vmin=0, vmax=2000)
+            axes[0, col].imshow(orient(pert_vol[mid_slice]), cmap='gray',
+                                vmin=0, vmax=2000, aspect='equal')
             diff = pert_vol[mid_slice] - original_vol[mid_slice]
-            axes[1, col].imshow(diff, cmap='RdBu_r', vmin=-200, vmax=200)
+            axes[1, col].imshow(orient(diff), cmap='RdBu_r',
+                                vmin=-200, vmax=200, aspect='equal')
         else:
             axes[0, col].text(0.5, 0.5, 'N/A', ha='center', va='center',
                               transform=axes[0, col].transAxes)
@@ -327,14 +391,20 @@ def plot_dose_difference_maps(config: dict, figures_dir: Path) -> None:
     p_names = list(PERTURBATION_LABELS.keys())
     n_perturb = len(p_names)
 
-    fig, axes = plt.subplots(2, n_perturb + 1, figsize=(3 * (n_perturb + 1), 6))
+    fig, axes = plt.subplots(2, n_perturb + 1, figsize=(3 * (n_perturb + 1), 8))
+
+    # Rotate slices 90° CCW so anatomy is upright (head at top)
+    def orient(slc):
+        return np.rot90(slc, k=1)
 
     # Baseline dose
     dose_max = np.percentile(baseline_dose[baseline_dose > 0], 99) if baseline_dose.max() > 0 else 70
-    axes[0, 0].imshow(baseline_dose[mid_slice], cmap='jet', vmin=0, vmax=dose_max)
+    axes[0, 0].imshow(orient(baseline_dose[mid_slice]), cmap='jet', vmin=0,
+                       vmax=dose_max, aspect='equal')
     axes[0, 0].set_title("Baseline")
     axes[0, 0].axis('off')
-    axes[1, 0].imshow(np.zeros_like(baseline_dose[mid_slice]), cmap='RdBu_r', vmin=-5, vmax=5)
+    axes[1, 0].imshow(orient(np.zeros_like(baseline_dose[mid_slice])), cmap='RdBu_r',
+                       vmin=-5, vmax=5, aspect='equal')
     axes[1, 0].set_title("Diff")
     axes[1, 0].axis('off')
 
@@ -348,9 +418,11 @@ def plot_dose_difference_maps(config: dict, figures_dir: Path) -> None:
             pert_dose[df_p.index.values] = df_p["data"].values
             pert_dose = pert_dose.reshape(VOLUME_SHAPE)
 
-            axes[0, col].imshow(pert_dose[mid_slice], cmap='jet', vmin=0, vmax=dose_max)
+            axes[0, col].imshow(orient(pert_dose[mid_slice]), cmap='jet', vmin=0,
+                                 vmax=dose_max, aspect='equal')
             diff = pert_dose[mid_slice] - baseline_dose[mid_slice]
-            axes[1, col].imshow(diff, cmap='RdBu_r', vmin=-5, vmax=5)
+            axes[1, col].imshow(orient(diff), cmap='RdBu_r', vmin=-5, vmax=5,
+                                 aspect='equal')
         else:
             axes[0, col].text(0.5, 0.5, 'N/A', ha='center', va='center',
                               transform=axes[0, col].transAxes)
@@ -404,29 +476,33 @@ def main():
 
     print(f"Generating figures in {figures_dir}")
 
-    # 1. Summary bars
-    print("\n1. Summary bar chart")
+    # 1. Degradation curves (gradual vs sudden take-off)
+    print("\n1. Degradation curves")
+    plot_degradation_curves(summary_df, figures_dir)
+
+    # 2. Summary bars
+    print("\n2. Summary bar chart")
     plot_summary_bars(summary_df, figures_dir)
 
-    # 2. Degradation heatmap
-    print("\n2. Degradation heatmap")
+    # 3. Degradation heatmap
+    print("\n3. Degradation heatmap")
     if "delta_dose_pct" in summary_df.columns:
         plot_degradation_heatmap(summary_df, figures_dir)
     else:
         print("  Skipping (no delta columns — need baseline + perturbed results)")
 
-    # 3. Structure radar
-    print("\n3. Per-structure radar plot")
+    # 4. Structure radar
+    print("\n4. Per-structure radar plot")
     plot_structure_radar(details, figures_dir)
 
-    # 4. CT slices
+    # 5. CT slices
     if not args.skip_ct:
-        print("\n4. Example CT slices")
+        print("\n5. Example CT slices")
         plot_ct_slices(config, figures_dir)
 
-    # 5. Dose difference maps
+    # 6. Dose difference maps
     if not args.skip_dose:
-        print("\n5. Dose difference maps")
+        print("\n6. Dose difference maps")
         plot_dose_difference_maps(config, figures_dir)
 
     print(f"\nAll figures saved to {figures_dir}")
