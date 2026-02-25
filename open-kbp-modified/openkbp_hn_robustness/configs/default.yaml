@@ -29,6 +29,15 @@ perturbations:
       L2:
         sigma_soft: 15.0
         sigma_bone: 25.0
+      L3:
+        sigma_soft: 30.0
+        sigma_bone: 50.0
+      L4:
+        sigma_soft: 60.0
+        sigma_bone: 100.0
+      L5:
+        sigma_soft: 100.0
+        sigma_bone: 160.0
 
   P2_bone_shift:
     enabled: true
@@ -40,6 +49,15 @@ perturbations:
       L2:
         shift_soft: 10.0
         shift_bone: 100.0
+      L3:
+        shift_soft: 25.0
+        shift_bone: 250.0
+      L4:
+        shift_soft: 50.0
+        shift_bone: 500.0
+      L5:
+        shift_soft: 100.0
+        shift_bone: 1000.0
 
   P3_bias_field:
     enabled: true
@@ -51,17 +69,35 @@ perturbations:
       L2:
         amplitude: 20.0
         n_harmonics: 3
+      L3:
+        amplitude: 50.0
+        n_harmonics: 3
+      L4:
+        amplitude: 100.0
+        n_harmonics: 3
+      L5:
+        amplitude: 200.0
+        n_harmonics: 3
 
   P4_resolution:
     enabled: true
     class: ResolutionDegradation
     levels:
+      L0:
+        sigma_z: 0.5
+        sigma_xy: 0.25
       L1:
         sigma_z: 1.0
         sigma_xy: 0.5
       L2:
         sigma_z: 2.0
         sigma_xy: 1.0
+      L3:
+        sigma_z: 3.0
+        sigma_xy: 1.5
+      L4:
+        sigma_z: 4.0
+        sigma_xy: 2.0
 
   P5_dental:
     enabled: true
@@ -75,6 +111,18 @@ perturbations:
         amplitude: 300.0
         n_streaks: 12
         metal_spot_hu: 3500.0
+      L3:
+        amplitude: 500.0
+        n_streaks: 16
+        metal_spot_hu: 3800.0
+      L4:
+        amplitude: 800.0
+        n_streaks: 20
+        metal_spot_hu: 4000.0
+      L5:
+        amplitude: 1200.0
+        n_streaks: 24
+        metal_spot_hu: 4095.0
 
 # Model inference settings
 inference:

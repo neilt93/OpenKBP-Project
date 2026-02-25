@@ -20,6 +20,9 @@ class AcquisitionNoise(BasePerturbation):
     levels = {
         "L1": {"sigma_soft": 8.0, "sigma_bone": 12.0},
         "L2": {"sigma_soft": 15.0, "sigma_bone": 25.0},
+        "L3": {"sigma_soft": 30.0, "sigma_bone": 50.0},
+        "L4": {"sigma_soft": 60.0, "sigma_bone": 100.0},
+        "L5": {"sigma_soft": 100.0, "sigma_bone": 160.0},
     }
 
     def apply(self, ct_volume: NDArray, body_mask: NDArray, level: str,

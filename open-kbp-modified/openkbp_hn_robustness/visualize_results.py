@@ -54,7 +54,14 @@ PERTURBATION_LABELS = {
     "P5_dental": "Dental Art.",
 }
 
-LEVEL_COLORS = {"L1": "#4C72B0", "L2": "#DD8452"}
+LEVEL_COLORS = {
+    "L0": "#77AADD",
+    "L1": "#4C72B0",
+    "L2": "#DD8452",
+    "L3": "#CC6677",
+    "L4": "#AA4499",
+    "L5": "#882255",
+}
 
 
 def load_results(metrics_dir: Path) -> tuple:
@@ -66,10 +73,23 @@ def load_results(metrics_dir: Path) -> tuple:
     return summary_df, details
 
 
+def _get_levels_for_perturbation(summary_df: pd.DataFrame, p_name: str) -> list:
+    """Extract sorted level names (L0, L1, ...) present in the data for a perturbation."""
+    all_levels = set()
+    for cond in summary_df["perturbation"].values:
+        if cond.startswith(f"{p_name}/"):
+            level = cond.split("/")[1]
+            all_levels.add(level)
+    # Sort: L0, L1, L2, ... (lexicographic works for L0-L9)
+    return sorted(all_levels)
+
+
 def plot_degradation_curves(summary_df: pd.DataFrame, figures_dir: Path) -> None:
     """Line plot: dose/DVH score vs perturbation level for each perturbation type.
 
     Shows where degradation takes off (gradual vs sudden) per perturbation.
+    Dynamically reads available levels from the data (handles different level
+    counts per perturbation, e.g. P4 has L0-L4, others have L1-L5).
     """
     p_names = list(PERTURBATION_LABELS.keys())
 
@@ -81,10 +101,7 @@ def plot_degradation_curves(summary_df: pd.DataFrame, figures_dir: Path) -> None
     baseline_dose = baseline_row["dose_score"].iloc[0]
     baseline_dvh = baseline_row["dvh_score"].iloc[0]
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    levels = ["L1", "L2"]
-    x_positions = [0, 1, 2]
-    x_labels = ["Baseline", "L1", "L2"]
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     colors = plt.cm.Set1(np.linspace(0, 0.6, len(p_names)))
 
@@ -95,6 +112,12 @@ def plot_degradation_curves(summary_df: pd.DataFrame, figures_dir: Path) -> None
         ax = axes[idx]
 
         for pi, p_name in enumerate(p_names):
+            levels = _get_levels_for_perturbation(summary_df, p_name)
+            if not levels:
+                continue
+
+            x_labels_line = ["Baseline"] + levels
+            x_positions_line = list(range(len(x_labels_line)))
             scores = [baseline_val]
             for level in levels:
                 condition = f"{p_name}/{level}"
@@ -105,11 +128,19 @@ def plot_degradation_curves(summary_df: pd.DataFrame, figures_dir: Path) -> None
                     scores.append(np.nan)
 
             label = PERTURBATION_LABELS.get(p_name, p_name)
-            ax.plot(x_positions[:len(scores)], scores, 'o-', color=colors[pi],
+            ax.plot(x_positions_line[:len(scores)], scores, 'o-', color=colors[pi],
                     label=label, linewidth=2, markersize=7)
 
-        ax.set_xticks(x_positions)
-        ax.set_xticklabels(x_labels)
+        # Build unified x-axis from all levels across perturbations
+        all_levels_union = sorted({
+            lvl for p in p_names
+            for lvl in _get_levels_for_perturbation(summary_df, p)
+        })
+        x_labels_all = ["Baseline"] + all_levels_union
+        x_positions_all = list(range(len(x_labels_all)))
+
+        ax.set_xticks(x_positions_all)
+        ax.set_xticklabels(x_labels_all)
         ax.set_ylabel(ylabel)
         ax.set_title(title)
         ax.legend(loc='upper left')
@@ -135,10 +166,9 @@ def plot_summary_bars(summary_df: pd.DataFrame, figures_dir: Path) -> None:
     for c in conditions:
         if c == "baseline":
             colors.append("#2CA02C")
-        elif "/L1" in c:
-            colors.append(LEVEL_COLORS["L1"])
         else:
-            colors.append(LEVEL_COLORS["L2"])
+            level = c.split("/")[-1] if "/" in c else "L1"
+            colors.append(LEVEL_COLORS.get(level, "#999999"))
 
     # Shorten labels
     labels = []
@@ -182,11 +212,18 @@ def plot_summary_bars(summary_df: pd.DataFrame, figures_dir: Path) -> None:
 
 
 def plot_degradation_heatmap(summary_df: pd.DataFrame, figures_dir: Path) -> None:
-    """Heatmap: 5 perturbations x 2 levels showing degradation %."""
+    """Heatmap: perturbations x levels showing degradation %."""
     p_names = list(PERTURBATION_LABELS.keys())
-    levels = ["L1", "L2"]
+    # Dynamically collect all levels present across all perturbations
+    levels = sorted({
+        lvl for p in p_names
+        for lvl in _get_levels_for_perturbation(summary_df, p)
+    })
+    if not levels:
+        print("  Skipping heatmap (no level data)")
+        return
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    fig, axes = plt.subplots(1, 2, figsize=(max(10, 2 * len(levels)), 4))
 
     for idx, (metric, title) in enumerate([("delta_dose_pct", "Dose Score Degradation (%)"),
                                             ("delta_dvh_pct", "DVH Score Degradation (%)")]):
@@ -236,15 +273,20 @@ def plot_structure_radar(details: list, figures_dir: Path) -> None:
     structures = ["Brainstem", "SpinalCord", "RightParotid", "LeftParotid",
                    "Esophagus", "Larynx", "Mandible", "PTV56", "PTV63", "PTV70"]
 
-    # Compute mean error per structure for each condition
-    conditions_to_plot = []
+    # Use the highest available level per perturbation for the radar plot
+    highest_per_perturb = {}
     for d in details:
-        if d["condition"] == "baseline" or "/L2" not in d["condition"]:
+        cond = d["condition"]
+        if cond == "baseline" or "/" not in cond:
             continue
-        conditions_to_plot.append(d)
+        p_name, level = cond.split("/")
+        if p_name not in highest_per_perturb or level > highest_per_perturb[p_name][0]:
+            highest_per_perturb[p_name] = (level, d)
+
+    conditions_to_plot = [v[1] for v in highest_per_perturb.values()]
 
     if not conditions_to_plot:
-        print("  Skipping radar plot (no L2 conditions)")
+        print("  Skipping radar plot (no perturbed conditions)")
         return
 
     # Aggregate per-structure: average across metrics for each structure
@@ -275,14 +317,14 @@ def plot_structure_radar(details: list, figures_dir: Path) -> None:
         ratios = [v / max(b, 1e-6) for v, b in zip(values, baseline_values)]
         ratios += ratios[:1]
 
-        p_name = d["condition"].split("/")[0]
-        label = PERTURBATION_LABELS.get(p_name, p_name) + " L2"
+        p_name, level = d["condition"].split("/")
+        label = PERTURBATION_LABELS.get(p_name, p_name) + f" {level}"
         ax.plot(angles, ratios, 'o-', color=colors[ci], label=label, linewidth=1.5, markersize=4)
         ax.fill(angles, ratios, alpha=0.1, color=colors[ci])
 
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(structures, fontsize=8)
-    ax.set_title("Per-Structure Error Ratio vs Baseline (L2)", pad=20)
+    ax.set_title("Per-Structure Error Ratio vs Baseline (highest level)", pad=20)
     ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
 
     plt.tight_layout()
