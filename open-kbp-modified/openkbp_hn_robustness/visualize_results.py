@@ -54,7 +54,14 @@ PERTURBATION_LABELS = {
     "P5_dental": "Dental Art.",
 }
 
-LEVEL_COLORS = {"L1": "#4C72B0", "L2": "#DD8452"}
+LEVEL_COLORS = {
+    "L0": "#77AADD",
+    "L1": "#4C72B0",
+    "L2": "#DD8452",
+    "L3": "#CC6677",
+    "L4": "#AA4499",
+    "L5": "#882255",
+}
 
 
 def load_results(metrics_dir: Path) -> tuple:
@@ -64,6 +71,86 @@ def load_results(metrics_dir: Path) -> tuple:
     with open(details_path) as f:
         details = json.load(f)
     return summary_df, details
+
+
+def _get_levels_for_perturbation(summary_df: pd.DataFrame, p_name: str) -> list:
+    """Extract sorted level names (L0, L1, ...) present in the data for a perturbation."""
+    all_levels = set()
+    for cond in summary_df["perturbation"].values:
+        if cond.startswith(f"{p_name}/"):
+            level = cond.split("/")[1]
+            all_levels.add(level)
+    # Sort: L0, L1, L2, ... (lexicographic works for L0-L9)
+    return sorted(all_levels)
+
+
+def plot_degradation_curves(summary_df: pd.DataFrame, figures_dir: Path) -> None:
+    """Line plot: dose/DVH score vs perturbation level for each perturbation type.
+
+    Shows where degradation takes off (gradual vs sudden) per perturbation.
+    Dynamically reads available levels from the data (handles different level
+    counts per perturbation, e.g. P4 has L0-L4, others have L1-L5).
+    """
+    p_names = list(PERTURBATION_LABELS.keys())
+
+    # Get baseline scores
+    baseline_row = summary_df[summary_df["perturbation"] == "baseline"]
+    if baseline_row.empty:
+        print("  Skipping degradation curves (no baseline)")
+        return
+    baseline_dose = baseline_row["dose_score"].iloc[0]
+    baseline_dvh = baseline_row["dvh_score"].iloc[0]
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    colors = plt.cm.Set1(np.linspace(0, 0.6, len(p_names)))
+
+    for idx, (metric, baseline_val, ylabel, title) in enumerate([
+        ("dose_score", baseline_dose, "Dose Score (Gy)", "Dose Score Degradation"),
+        ("dvh_score", baseline_dvh, "DVH Score", "DVH Score Degradation"),
+    ]):
+        ax = axes[idx]
+
+        for pi, p_name in enumerate(p_names):
+            levels = _get_levels_for_perturbation(summary_df, p_name)
+            if not levels:
+                continue
+
+            x_labels_line = ["Baseline"] + levels
+            x_positions_line = list(range(len(x_labels_line)))
+            scores = [baseline_val]
+            for level in levels:
+                condition = f"{p_name}/{level}"
+                row = summary_df[summary_df["perturbation"] == condition]
+                if not row.empty:
+                    scores.append(row[metric].iloc[0])
+                else:
+                    scores.append(np.nan)
+
+            label = PERTURBATION_LABELS.get(p_name, p_name)
+            ax.plot(x_positions_line[:len(scores)], scores, 'o-', color=colors[pi],
+                    label=label, linewidth=2, markersize=7)
+
+        # Build unified x-axis from all levels across perturbations
+        all_levels_union = sorted({
+            lvl for p in p_names
+            for lvl in _get_levels_for_perturbation(summary_df, p)
+        })
+        x_labels_all = ["Baseline"] + all_levels_union
+        x_positions_all = list(range(len(x_labels_all)))
+
+        ax.set_xticks(x_positions_all)
+        ax.set_xticklabels(x_labels_all)
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.legend(loc='upper left')
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    fig.savefig(figures_dir / "degradation_curves.png", bbox_inches='tight')
+    fig.savefig(figures_dir / "degradation_curves.pdf", bbox_inches='tight')
+    plt.close(fig)
+    print(f"  Saved degradation_curves.png/pdf")
 
 
 def plot_summary_bars(summary_df: pd.DataFrame, figures_dir: Path) -> None:
@@ -79,10 +166,9 @@ def plot_summary_bars(summary_df: pd.DataFrame, figures_dir: Path) -> None:
     for c in conditions:
         if c == "baseline":
             colors.append("#2CA02C")
-        elif "/L1" in c:
-            colors.append(LEVEL_COLORS["L1"])
         else:
-            colors.append(LEVEL_COLORS["L2"])
+            level = c.split("/")[-1] if "/" in c else "L1"
+            colors.append(LEVEL_COLORS.get(level, "#999999"))
 
     # Shorten labels
     labels = []
@@ -126,11 +212,18 @@ def plot_summary_bars(summary_df: pd.DataFrame, figures_dir: Path) -> None:
 
 
 def plot_degradation_heatmap(summary_df: pd.DataFrame, figures_dir: Path) -> None:
-    """Heatmap: 5 perturbations x 2 levels showing degradation %."""
+    """Heatmap: perturbations x levels showing degradation %."""
     p_names = list(PERTURBATION_LABELS.keys())
-    levels = ["L1", "L2"]
+    # Dynamically collect all levels present across all perturbations
+    levels = sorted({
+        lvl for p in p_names
+        for lvl in _get_levels_for_perturbation(summary_df, p)
+    })
+    if not levels:
+        print("  Skipping heatmap (no level data)")
+        return
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    fig, axes = plt.subplots(1, 2, figsize=(max(10, 2 * len(levels)), 4))
 
     for idx, (metric, title) in enumerate([("delta_dose_pct", "Dose Score Degradation (%)"),
                                             ("delta_dvh_pct", "DVH Score Degradation (%)")]):
@@ -180,15 +273,20 @@ def plot_structure_radar(details: list, figures_dir: Path) -> None:
     structures = ["Brainstem", "SpinalCord", "RightParotid", "LeftParotid",
                    "Esophagus", "Larynx", "Mandible", "PTV56", "PTV63", "PTV70"]
 
-    # Compute mean error per structure for each condition
-    conditions_to_plot = []
+    # Use the highest available level per perturbation for the radar plot
+    highest_per_perturb = {}
     for d in details:
-        if d["condition"] == "baseline" or "/L2" not in d["condition"]:
+        cond = d["condition"]
+        if cond == "baseline" or "/" not in cond:
             continue
-        conditions_to_plot.append(d)
+        p_name, level = cond.split("/")
+        if p_name not in highest_per_perturb or level > highest_per_perturb[p_name][0]:
+            highest_per_perturb[p_name] = (level, d)
+
+    conditions_to_plot = [v[1] for v in highest_per_perturb.values()]
 
     if not conditions_to_plot:
-        print("  Skipping radar plot (no L2 conditions)")
+        print("  Skipping radar plot (no perturbed conditions)")
         return
 
     # Aggregate per-structure: average across metrics for each structure
@@ -219,14 +317,14 @@ def plot_structure_radar(details: list, figures_dir: Path) -> None:
         ratios = [v / max(b, 1e-6) for v, b in zip(values, baseline_values)]
         ratios += ratios[:1]
 
-        p_name = d["condition"].split("/")[0]
-        label = PERTURBATION_LABELS.get(p_name, p_name) + " L2"
+        p_name, level = d["condition"].split("/")
+        label = PERTURBATION_LABELS.get(p_name, p_name) + f" {level}"
         ax.plot(angles, ratios, 'o-', color=colors[ci], label=label, linewidth=1.5, markersize=4)
         ax.fill(angles, ratios, alpha=0.1, color=colors[ci])
 
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(structures, fontsize=8)
-    ax.set_title("Per-Structure Error Ratio vs Baseline (L2)", pad=20)
+    ax.set_title("Per-Structure Error Ratio vs Baseline (highest level)", pad=20)
     ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
 
     plt.tight_layout()
@@ -258,16 +356,22 @@ def plot_ct_slices(config: dict, figures_dir: Path) -> None:
     p_names = list(PERTURBATION_LABELS.keys())
     n_perturb = len(p_names)
 
-    fig, axes = plt.subplots(2, n_perturb + 1, figsize=(3 * (n_perturb + 1), 6))
+    fig, axes = plt.subplots(2, n_perturb + 1, figsize=(3 * (n_perturb + 1), 8))
+
+    # Rotate slices 90° CCW so anatomy is upright (head at top)
+    def orient(slc):
+        return np.rot90(slc, k=1)
 
     # Original
     for row in range(2):
-        im = axes[row, 0].imshow(original_vol[mid_slice], cmap='gray', vmin=0, vmax=2000)
+        if row == 0:
+            axes[row, 0].imshow(orient(original_vol[mid_slice]), cmap='gray',
+                                vmin=0, vmax=2000, aspect='equal')
+        else:
+            axes[row, 0].imshow(orient(np.zeros_like(original_vol[mid_slice])),
+                                cmap='RdBu_r', vmin=-200, vmax=200, aspect='equal')
         axes[row, 0].set_title("Original" if row == 0 else "Diff")
         axes[row, 0].axis('off')
-        if row == 1:
-            axes[row, 0].imshow(np.zeros_like(original_vol[mid_slice]), cmap='RdBu_r',
-                                vmin=-200, vmax=200)
 
     # Each perturbation (L2)
     for pi, p_name in enumerate(p_names):
@@ -276,9 +380,11 @@ def plot_ct_slices(config: dict, figures_dir: Path) -> None:
 
         if pert_dir.exists():
             pert_vol, _ = load_ct_volume(pert_dir)
-            axes[0, col].imshow(pert_vol[mid_slice], cmap='gray', vmin=0, vmax=2000)
+            axes[0, col].imshow(orient(pert_vol[mid_slice]), cmap='gray',
+                                vmin=0, vmax=2000, aspect='equal')
             diff = pert_vol[mid_slice] - original_vol[mid_slice]
-            axes[1, col].imshow(diff, cmap='RdBu_r', vmin=-200, vmax=200)
+            axes[1, col].imshow(orient(diff), cmap='RdBu_r',
+                                vmin=-200, vmax=200, aspect='equal')
         else:
             axes[0, col].text(0.5, 0.5, 'N/A', ha='center', va='center',
                               transform=axes[0, col].transAxes)
@@ -327,14 +433,20 @@ def plot_dose_difference_maps(config: dict, figures_dir: Path) -> None:
     p_names = list(PERTURBATION_LABELS.keys())
     n_perturb = len(p_names)
 
-    fig, axes = plt.subplots(2, n_perturb + 1, figsize=(3 * (n_perturb + 1), 6))
+    fig, axes = plt.subplots(2, n_perturb + 1, figsize=(3 * (n_perturb + 1), 8))
+
+    # Rotate slices 90° CCW so anatomy is upright (head at top)
+    def orient(slc):
+        return np.rot90(slc, k=1)
 
     # Baseline dose
     dose_max = np.percentile(baseline_dose[baseline_dose > 0], 99) if baseline_dose.max() > 0 else 70
-    axes[0, 0].imshow(baseline_dose[mid_slice], cmap='jet', vmin=0, vmax=dose_max)
+    axes[0, 0].imshow(orient(baseline_dose[mid_slice]), cmap='jet', vmin=0,
+                       vmax=dose_max, aspect='equal')
     axes[0, 0].set_title("Baseline")
     axes[0, 0].axis('off')
-    axes[1, 0].imshow(np.zeros_like(baseline_dose[mid_slice]), cmap='RdBu_r', vmin=-5, vmax=5)
+    axes[1, 0].imshow(orient(np.zeros_like(baseline_dose[mid_slice])), cmap='RdBu_r',
+                       vmin=-5, vmax=5, aspect='equal')
     axes[1, 0].set_title("Diff")
     axes[1, 0].axis('off')
 
@@ -348,9 +460,11 @@ def plot_dose_difference_maps(config: dict, figures_dir: Path) -> None:
             pert_dose[df_p.index.values] = df_p["data"].values
             pert_dose = pert_dose.reshape(VOLUME_SHAPE)
 
-            axes[0, col].imshow(pert_dose[mid_slice], cmap='jet', vmin=0, vmax=dose_max)
+            axes[0, col].imshow(orient(pert_dose[mid_slice]), cmap='jet', vmin=0,
+                                 vmax=dose_max, aspect='equal')
             diff = pert_dose[mid_slice] - baseline_dose[mid_slice]
-            axes[1, col].imshow(diff, cmap='RdBu_r', vmin=-5, vmax=5)
+            axes[1, col].imshow(orient(diff), cmap='RdBu_r', vmin=-5, vmax=5,
+                                 aspect='equal')
         else:
             axes[0, col].text(0.5, 0.5, 'N/A', ha='center', va='center',
                               transform=axes[0, col].transAxes)
@@ -404,29 +518,33 @@ def main():
 
     print(f"Generating figures in {figures_dir}")
 
-    # 1. Summary bars
-    print("\n1. Summary bar chart")
+    # 1. Degradation curves (gradual vs sudden take-off)
+    print("\n1. Degradation curves")
+    plot_degradation_curves(summary_df, figures_dir)
+
+    # 2. Summary bars
+    print("\n2. Summary bar chart")
     plot_summary_bars(summary_df, figures_dir)
 
-    # 2. Degradation heatmap
-    print("\n2. Degradation heatmap")
+    # 3. Degradation heatmap
+    print("\n3. Degradation heatmap")
     if "delta_dose_pct" in summary_df.columns:
         plot_degradation_heatmap(summary_df, figures_dir)
     else:
         print("  Skipping (no delta columns — need baseline + perturbed results)")
 
-    # 3. Structure radar
-    print("\n3. Per-structure radar plot")
+    # 4. Structure radar
+    print("\n4. Per-structure radar plot")
     plot_structure_radar(details, figures_dir)
 
-    # 4. CT slices
+    # 5. CT slices
     if not args.skip_ct:
-        print("\n4. Example CT slices")
+        print("\n5. Example CT slices")
         plot_ct_slices(config, figures_dir)
 
-    # 5. Dose difference maps
+    # 6. Dose difference maps
     if not args.skip_dose:
-        print("\n5. Dose difference maps")
+        print("\n6. Dose difference maps")
         plot_dose_difference_maps(config, figures_dir)
 
     print(f"\nAll figures saved to {figures_dir}")

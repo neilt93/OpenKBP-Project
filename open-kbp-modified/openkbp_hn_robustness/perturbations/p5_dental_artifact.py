@@ -15,6 +15,9 @@ class DentalArtifact(BasePerturbation):
     levels = {
         "L1": {"amplitude": 150.0, "n_streaks": 8, "metal_spot_hu": 3000.0},
         "L2": {"amplitude": 300.0, "n_streaks": 12, "metal_spot_hu": 3500.0},
+        "L3": {"amplitude": 500.0, "n_streaks": 16, "metal_spot_hu": 3800.0},
+        "L4": {"amplitude": 800.0, "n_streaks": 20, "metal_spot_hu": 4000.0},
+        "L5": {"amplitude": 1200.0, "n_streaks": 24, "metal_spot_hu": 4095.0},
     }
 
     def apply(self, ct_volume: NDArray, body_mask: NDArray, level: str,

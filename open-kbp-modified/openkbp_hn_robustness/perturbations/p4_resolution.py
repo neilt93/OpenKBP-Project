@@ -14,8 +14,11 @@ from .base import BasePerturbation
 class ResolutionDegradation(BasePerturbation):
     name = "P4_resolution"
     levels = {
+        "L0": {"sigma_z": 0.5, "sigma_xy": 0.25},
         "L1": {"sigma_z": 1.0, "sigma_xy": 0.5},
         "L2": {"sigma_z": 2.0, "sigma_xy": 1.0},
+        "L3": {"sigma_z": 3.0, "sigma_xy": 1.5},
+        "L4": {"sigma_z": 4.0, "sigma_xy": 2.0},
     }
 
     def apply(self, ct_volume: NDArray, body_mask: NDArray, level: str,

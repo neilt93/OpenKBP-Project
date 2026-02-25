@@ -22,9 +22,18 @@ script_dir = Path(__file__).parent.resolve()
 project_root = script_dir.parent
 sys.path.insert(0, str(project_root))
 
-from provided_code.data_loader import DataLoader
-from provided_code.dose_evaluation_class import DoseEvaluator
-from provided_code.utils import get_paths
+# DataLoader and DoseEvaluator don't need TF, but provided_code/__init__.py
+# imports PredictionModel which pulls in tensorflow. Register a fake provided_code
+# package so Python doesn't execute __init__.py, then import submodules directly.
+import types
+if 'provided_code' not in sys.modules:
+    _pkg = types.ModuleType('provided_code')
+    _pkg.__path__ = [str(project_root / 'provided_code')]
+    sys.modules['provided_code'] = _pkg
+
+from provided_code.utils import get_paths  # noqa: E402
+from provided_code.data_loader import DataLoader  # noqa: E402
+from provided_code.dose_evaluation_class import DoseEvaluator  # noqa: E402
 
 
 def evaluate_condition(condition_name: str, prediction_dir: Path,

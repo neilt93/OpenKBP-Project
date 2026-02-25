@@ -21,6 +21,9 @@ class BoneWeightedShift(BasePerturbation):
     levels = {
         "L1": {"shift_soft": 5.0, "shift_bone": 50.0},
         "L2": {"shift_soft": 10.0, "shift_bone": 100.0},
+        "L3": {"shift_soft": 25.0, "shift_bone": 250.0},
+        "L4": {"shift_soft": 50.0, "shift_bone": 500.0},
+        "L5": {"shift_soft": 100.0, "shift_bone": 1000.0},
     }
 
     def apply(self, ct_volume: NDArray, body_mask: NDArray, level: str,

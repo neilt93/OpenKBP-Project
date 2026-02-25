@@ -14,6 +14,9 @@ class BiasField(BasePerturbation):
     levels = {
         "L1": {"amplitude": 10.0, "n_harmonics": 3},
         "L2": {"amplitude": 20.0, "n_harmonics": 3},
+        "L3": {"amplitude": 50.0, "n_harmonics": 3},
+        "L4": {"amplitude": 100.0, "n_harmonics": 3},
+        "L5": {"amplitude": 200.0, "n_harmonics": 3},
     }
 
     def apply(self, ct_volume: NDArray, body_mask: NDArray, level: str,
