@@ -39,3 +39,16 @@ submissions/
 
 # Claude config
 .claude/
+
+# Warehouse symlinks — large data moved to SanDisk external drive
+# (the trailing-slash patterns above don't match these symlinks, so list them without slash)
+results
+provided-data
+**/data_perturbed
+**/predictions
+
+# Proton pipeline — local QC venv + generated matRad/QC artifacts (regenerate from data)
+open-kbp-modified/.venv-qc/
+**/openkbp_hn_proton/matrad_cases/
+**/openkbp_hn_proton/qc/
+**/openkbp_hn_proton/proton_dose/
