@@ -134,15 +134,15 @@ function plan_one(inPath, outPath)
 
     pln.propDoseCalc.calcLET = 0;
     pln.propDoseCalc.engine  = 'HongPB';     % analytical pencil beam
-    % Compute dose on a FINE 3 mm grid (proton penumbra/peak is ~3-5 mm; the
-    % OpenKBP CT is a coarse 5.422 mm laterally). matRad_calcCubes then trilinearly
-    % interpolates the result back onto the 128^3 CT grid (calcCubes.m:224). Setting
-    % the dose grid == the coarse CT grid (as before) skips that interpolation and
-    % leaves a speckle of zero-dose holes between spots -> D95=0. 3 mm matches
-    % example5_protons.
-    pln.propDoseCalc.doseGrid.resolution.x = 3;
-    pln.propDoseCalc.doseGrid.resolution.y = 3;
-    pln.propDoseCalc.doseGrid.resolution.z = 3;
+    % Compute dose on a FINE grid (proton penumbra/peak is ~3-5 mm; the OpenKBP CT
+    % is a coarse 5.422 mm laterally). matRad_calcCubes then trilinearly interpolates
+    % the result onto the 128^3 CT grid (calcCubes.m:224); a dose grid == the coarse
+    % CT grid skips that and leaves zero-dose speckle holes -> D95=0.
+    % 4 mm (not 3 mm) keeps dij memory ~constant when paired with 3 mm spots so the
+    % whole thing fits the 7.6 GB local container. On a bigger box, drop to 3 mm.
+    pln.propDoseCalc.doseGrid.resolution.x = 4;
+    pln.propDoseCalc.doseGrid.resolution.y = 4;
+    pln.propDoseCalc.doseGrid.resolution.z = 4;
 
     % ---- generate, calc, optimize ------------------------------------------
     stf       = matRad_generateStf(ct, cst, pln);

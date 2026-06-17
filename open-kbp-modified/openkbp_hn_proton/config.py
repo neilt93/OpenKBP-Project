@@ -56,12 +56,11 @@ PRESCRIPTIONS = {"PTV70": 70.0, "PTV63": 63.0, "PTV56": 56.0}
 # This is a design choice to revisit after reviewing plan quality (Phase 1 QC).
 GANTRY_ANGLES = [180.0, 60.0, 300.0]
 COUCH_ANGLES = [0.0, 0.0, 0.0]
-BIXEL_WIDTH = 5.0  # mm (pencil-beam spot spacing). 5 mm runs reliably under local
-                   # Docker x86 emulation (~4 min/patient). NOTE: 5 mm leaves some
-                   # exact-zero coverage gaps in the target (~10% of PTV70 voxels);
-                   # 3 mm fills them but ~3x the spots — too heavy for the 7.6 GB
-                   # emulated container (gets killed mid dose-calc). Use 3 mm for the
-                   # 240-patient production batch on native x86 (RunPod), where it fits.
+BIXEL_WIDTH = 3.0  # mm (pencil-beam spot spacing). 3 mm closes the lateral
+                   # coverage gaps that 5 mm left (~10% exact-zero PTV70 voxels).
+                   # 3 mm ~3x the spots; to fit the 7.6 GB local container the dose
+                   # grid is set a touch coarser (4 mm, see run_plan.m) so dij memory
+                   # stays ~constant. On native x86 (RunPod) use 3 mm grid too.
 
 # --- matRad cst objective weights -------------------------------------------
 TARGET_PENALTY = 1000.0   # SquaredDeviation on each PTV at its prescription

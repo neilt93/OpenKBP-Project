@@ -93,14 +93,29 @@ the 128³ CT grid, output scaled ×`numOfFractions` to total-course Gy(RBE).
 
 ### Plan-quality tuning (the open Phase-1 item)
 The pipeline is correct end-to-end; the **auto-plan quality** still needs work before
-it's good ground truth. Observed on pt_201 (5 mm spots):
-- **~10% of PTV70 at exact-zero** — lateral spot-coverage gaps; fixed by 3 mm spots
-  (`config.BIXEL_WIDTH`, needs native x86).
-- **Small disjoint PTV63/PTV56 under-covered** — they have ~10×/20× fewer voxels than
-  PTV70 so they barely move the (voxel-count-weighted) objective; needs per-target
-  penalty scaling or normalized objectives.
-- **Parotid hotspots** (Dmax ≫ limit) — needs stronger OAR penalty / max-dose objective.
-- This is where **clinical input** (beam angles, prescription, OAR constraints) matters.
+it's good ground truth. Quantified on pt_201 with **3 mm spots / 4 mm dose grid**
+(112k variables, fits the 7.6 GB local container — ~6 min):
+- **PTV70**: D50 = 69 Gy (median at prescription), D2 = 73 (no big hotspot), the dose is
+  conformal — BUT D95 ≈ 3 and only ~60% of the volume gets ≥ 90% of prescription. The
+  under-dose is at the **target's S-I edges** (most superior/inferior slices) and the
+  periphery — a penumbra/margin + beam-coverage effect, not a bug.
+- **Small disjoint PTV63/PTV56 largely unreached** (D50 ≈ 18 / 12; ~10% / 3% coverage).
+  matRad's objectives are per-structure-normalized, so this is **reachability**, not
+  voxel-count weighting — the single-isocenter 3-beam axial arrangement doesn't serve
+  the separate small volumes.
+- **Parotid hotspots** (Dmax ~75 ≫ 26 limit) — the OAR-vs-target objective balance is
+  off; needs stronger OAR penalty / max-dose objectives or DVH objectives.
+- **Ruled out** (not the cause of under-coverage): lateral spot density (3 mm barely
+  changed it), dose-grid sampling, orientation/index (roundtrips exact), objective
+  voxel-count weighting (normalized).
+- **Diagnosis:** the open issues are **beam geometry + planning protocol** (margins,
+  beam angles per disjoint target, objective balance) — clinical-judgment tuning, not a
+  pipeline defect. This is where **Birjoo's input** (beam arrangement, prescription, OAR
+  constraints) is the right next step, alongside adding PTV-margin / DVH objectives.
+
+**Local compute note:** 3 mm spots fit the 7.6 GB Docker container only by pairing them
+with a 4 mm (not 3 mm) dose grid so the dij memory stays ~constant. On a bigger box use
+3 mm spots + 3 mm grid. matRad dose calc is CPU-only — no GPU involved at any point.
 
 ## Design decisions (in `config.py` — held FIXED across all patients)
 
