@@ -8,6 +8,7 @@ import tensorflow as tf
 from tensorflow.keras.models import load_model
 from tensorflow.keras.optimizers import Adam
 
+from provided_code.augmentation import augment_batch as augment_batch_geometric
 from provided_code.data_loader import DataLoader
 from provided_code.network_architectures import DefineDoseFromCT, InstanceNormalization
 from provided_code.utils import get_paths, sparse_vector_function
@@ -148,6 +149,7 @@ class PredictionModel(DefineDoseFromCT):
         use_jit: bool = True,
         use_masked_loss: bool = True,
         ptv_weight: float = 2.0,
+        aug_params: Optional[dict] = None,
     ) -> None:
         """
         :param data_loader: An object that loads batches of image data
@@ -178,6 +180,11 @@ class PredictionModel(DefineDoseFromCT):
         self.use_dvh_loss = use_dvh_loss
         self.dvh_weight = dvh_weight
         self.use_augmentation = use_augmentation
+        # Geometric / perturbation augmentation strengths (translate/rotate/scale/elastic/
+        # noise). When non-empty, augmentation runs on the numpy batch via
+        # augment_batch_geometric (XLA is off with --no-jit); when empty, the lightweight
+        # tf flip+intensity path (augment_batch_tf) is used, preserving prior behavior.
+        self.aug_params = aug_params or {}
         self.use_masked_loss = use_masked_loss
         self.ptv_weight = ptv_weight
 
@@ -380,14 +387,25 @@ class PredictionModel(DefineDoseFromCT):
             epoch_metrics = {'loss': [], 'mae': [], 'dvh': []}
 
             for idx, batch in enumerate(self.data_loader.get_batches()):
-                # Get batch data and convert to tensors (convert_to_tensor allows overlap)
-                ct = tf.convert_to_tensor(batch.ct, dtype=tf.float32)
-                structure_masks = tf.convert_to_tensor(batch.structure_masks, dtype=tf.float32)
-                dose = tf.convert_to_tensor(batch.dose, dtype=tf.float32)
-                possible_dose_mask = tf.convert_to_tensor(batch.possible_dose_mask, dtype=tf.float32)
+                bct, bsm = batch.ct, batch.structure_masks
+                bdose, bpdm = batch.dose, batch.possible_dose_mask
 
-                # Apply TF augmentation if enabled (XLA-compatible)
-                if self.use_augmentation:
+                # Geometric/perturbation augmentation on the numpy batch (translate,
+                # rotate, scale, elastic, CT noise) — keeps CT/masks/dose registered.
+                if self.use_augmentation and self.aug_params:
+                    bct, bsm, bdose, bpdm = augment_batch_geometric(
+                        bct, bsm, bdose, bpdm, **self.aug_params
+                    )
+
+                # Convert to tensors (convert_to_tensor allows overlap)
+                ct = tf.convert_to_tensor(bct, dtype=tf.float32)
+                structure_masks = tf.convert_to_tensor(bsm, dtype=tf.float32)
+                dose = tf.convert_to_tensor(bdose, dtype=tf.float32)
+                possible_dose_mask = tf.convert_to_tensor(bpdm, dtype=tf.float32)
+
+                # Lightweight tf flip+intensity path when no geometric params given
+                # (preserves prior --use-aug behavior, XLA-compatible).
+                if self.use_augmentation and not self.aug_params:
                     ct, structure_masks, dose, possible_dose_mask = augment_batch_tf(
                         ct, structure_masks, dose, possible_dose_mask
                     )

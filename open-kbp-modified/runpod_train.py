@@ -48,6 +48,21 @@ def main():
     parser.add_argument('--use-dvh', action='store_true', help='Enable DVH-aware loss function')
     parser.add_argument('--dvh-weight', type=float, default=0.1, help='DVH loss weight (default: 0.1)')
     parser.add_argument('--use-aug', action='store_true', help='Enable data augmentation (flips, intensity scaling)')
+    # Geometric / perturbation augmentation (robustness retraining). Any of these turns on
+    # the numpy augmentation path (includes flips+intensity); needs --no-jit (XLA off).
+    parser.add_argument('--aug-translate', type=float, default=0.0, help='Max translation fraction per axis (e.g. 0.1)')
+    parser.add_argument('--aug-rotate', type=float, default=0.0, help='Max in-plane (axial) rotation in degrees (e.g. 10)')
+    parser.add_argument('--aug-scale', type=float, default=0.0, help='Max in-plane scale delta (e.g. 0.1 = +/-10%%)')
+    parser.add_argument('--aug-elastic', type=float, default=0.0, help='Elastic deformation strength in voxels (e.g. 3)')
+    parser.add_argument('--aug-noise', type=float, default=0.0, help='CT Gaussian noise std, normalized units (e.g. 0.02)')
+    # Inject pre-generated perturbed-CT sets into the training group (robustness retraining)
+    parser.add_argument('--inject-perturbed', type=str, default=None, help='Root of pre-generated perturbed-CT sets to inject')
+    parser.add_argument('--inject-glob', type=str, default='*/*/{pid}/ct.csv', help='Glob for perturbed CTs under --inject-perturbed ({pid}=patient id)')
+    parser.add_argument('--inject-families', nargs='*', default=None, help='Only inject variants whose tag contains these (e.g. P2 P4)')
+    parser.add_argument('--inject-levels', nargs='*', default=None, help='Only inject variants whose tag contains these (e.g. L3 L4)')
+    parser.add_argument('--inject-max-per-patient', type=int, default=None, help='Cap injected variants per clean patient (clean:perturbed ratio control)')
+    parser.add_argument('--inject-out', type=str, default=None, help='Dir for composed injected patients (default: <inject-perturbed>/_injected)')
+    parser.add_argument('--inject-reuse-existing', action='store_true', help='Use perturbed dirs directly if they already have dose+masks')
     parser.add_argument('--no-masked-loss', action='store_true', help='Disable masked MAE loss (use unweighted MAE)')
     parser.add_argument('--ptv-weight', type=float, default=2.0, help='Extra weight on PTV voxels (default: 2.0, 0=no weighting)')
     parser.add_argument('--seed', type=int, default=None, help='Random seed for reproducibility (for ensemble training)')
@@ -75,6 +90,19 @@ def main():
         name_parts.append(f"DVH{args.dvh_weight}")
     if args.use_aug:
         name_parts.append("AUG")
+    # Geometric augmentation strengths -> numpy augmentation path
+    aug_params = {}
+    if any([args.aug_translate, args.aug_rotate, args.aug_scale, args.aug_elastic, args.aug_noise]):
+        aug_params = dict(
+            translate_frac=args.aug_translate,
+            rotate_deg=args.aug_rotate,
+            scale_range=args.aug_scale,
+            elastic_alpha=args.aug_elastic,
+            noise_std=args.aug_noise,
+        )
+        name_parts.append("AUGGEO")
+    if args.inject_perturbed:
+        name_parts.append("INJ")
     if not args.no_masked_loss:
         name_parts.append(f"MASK_PTV{args.ptv_weight}")
     if not args.no_normalize:
@@ -129,6 +157,25 @@ def main():
     training_plan_paths = get_paths(training_data_dir)
     print(f"Found {len(training_plan_paths)} training patients")
 
+    # Inject pre-generated perturbed-CT sets (perturbed CT + clean dose/masks) so the
+    # model learns to predict the correct dose despite a corrupted CT.
+    if args.inject_perturbed:
+        from provided_code.inject_perturbed import build_injected_set
+        inject_out = Path(args.inject_out) if args.inject_out else Path(args.inject_perturbed) / "_injected"
+        # Leakage guard: the validation patients must never enter training. Derive their
+        # ids from the hold-out dir and forbid them in the injection.
+        holdout_ids = {p.name for p in get_paths(validation_data_dir)} if validation_data_dir.exists() else set()
+        injected = build_injected_set(
+            training_data_dir, Path(args.inject_perturbed), inject_out,
+            glob=args.inject_glob, families=args.inject_families, levels=args.inject_levels,
+            max_per_patient=args.inject_max_per_patient, holdout_ids=holdout_ids,
+            reuse_existing=args.inject_reuse_existing,
+        )
+        print(f"Injected {len(injected)} perturbed patients into the training group "
+              f"(families={args.inject_families or 'all'})")
+        training_plan_paths = list(training_plan_paths) + injected
+        print(f"Training group is now {len(training_plan_paths)} patients")
+
     # Train model (unless predict-only or eval-only)
     if not args.predict_only and not args.eval_only:
         features = []
@@ -150,10 +197,11 @@ def main():
             use_se_blocks=args.use_se,
             use_dvh_loss=args.use_dvh,
             dvh_weight=args.dvh_weight,
-            use_augmentation=args.use_aug,
+            use_augmentation=args.use_aug or bool(aug_params),
             use_jit=not args.no_jit,
             use_masked_loss=not args.no_masked_loss,
             ptv_weight=args.ptv_weight,
+            aug_params=aug_params,
         )
         dose_prediction_model_train.train_model(
             epochs=num_epochs,
@@ -213,6 +261,9 @@ def main():
         "use_dvh_loss": args.use_dvh,
         "dvh_weight": args.dvh_weight if args.use_dvh else None,
         "use_augmentation": args.use_aug,
+        "aug_geometric": aug_params or None,
+        "inject_perturbed": args.inject_perturbed,
+        "inject_families": args.inject_families,
         "use_masked_loss": not args.no_masked_loss,
         "ptv_weight": args.ptv_weight if not args.no_masked_loss else None,
         "normalize": not args.no_normalize,
