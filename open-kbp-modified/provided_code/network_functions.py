@@ -1,4 +1,7 @@
 import os
+import queue
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional, List
 
@@ -371,6 +374,50 @@ class PredictionModel(DefineDoseFromCT):
             'dvh': float(dvh_loss)
         }
 
+    def _iter_augmented_batches(self):
+        """Yield geometrically-augmented numpy batches (ct, sm, dose, pdm), produced
+        CONCURRENTLY ahead of the GPU consumer to keep the GPU fed.
+
+        Geometric augmentation is the training bottleneck: per sample it resamples 13
+        channels with scipy.map_coordinates plus elastic gaussian_filters on 128^3. Those
+        are C extensions that release the GIL, so running several BATCH augmentations at
+        once (a pool of `depth` tasks, each fanning batch_size per-sample tasks out to
+        augmentation._POOL) keeps ~depth*batch_size cores busy while the main thread runs
+        the GPU step — overlapping CPU augmentation with GPU compute. Without this, batches
+        augment sequentially (~4 cores) and the GPU idles ~95% of the epoch.
+
+        Tunables (env): AUG_PREFETCH_DEPTH (concurrent batch-augmentations / queue depth),
+        AUG_POOL_WORKERS (per-sample pool width, see augmentation._POOL).
+        """
+        depth = int(os.environ.get("AUG_PREFETCH_DEPTH", 16))
+        raw_batches = self.data_loader.get_batches()
+        executor = ThreadPoolExecutor(max_workers=depth)
+        pending: "queue.Queue" = queue.Queue(maxsize=depth)
+        sentinel = object()
+
+        def _augment(batch):
+            return augment_batch_geometric(
+                batch.ct, batch.structure_masks, batch.dose, batch.possible_dose_mask,
+                None, **self.aug_params,
+            )
+
+        def _producer():
+            try:
+                for batch in raw_batches:
+                    pending.put(executor.submit(_augment, batch))  # blocks when `depth` ahead
+            finally:
+                pending.put(sentinel)
+
+        threading.Thread(target=_producer, daemon=True).start()
+        try:
+            while True:
+                item = pending.get()
+                if item is sentinel:
+                    break
+                yield item.result()
+        finally:
+            executor.shutdown(wait=False)
+
     def train_model(self, epochs: int = 200, save_frequency: int = 5, keep_model_history: int = 2) -> None:
         """
         :param epochs: the number of epochs the model will be trained over
@@ -391,16 +438,18 @@ class PredictionModel(DefineDoseFromCT):
 
             epoch_metrics = {'loss': [], 'mae': [], 'dvh': []}
 
-            for idx, batch in enumerate(self.data_loader.get_batches()):
-                bct, bsm = batch.ct, batch.structure_masks
-                bdose, bpdm = batch.dose, batch.possible_dose_mask
+            # When geometric augmentation is active it is the bottleneck, so produce the
+            # augmented numpy batches CONCURRENTLY ahead of the GPU (see
+            # _iter_augmented_batches); otherwise iterate the raw batches directly.
+            geometric_aug = self.use_augmentation and bool(self.aug_params)
+            batch_source = self._iter_augmented_batches() if geometric_aug else self.data_loader.get_batches()
 
-                # Geometric/perturbation augmentation on the numpy batch (translate,
-                # rotate, scale, elastic, CT noise) — keeps CT/masks/dose registered.
-                if self.use_augmentation and self.aug_params:
-                    bct, bsm, bdose, bpdm = augment_batch_geometric(
-                        bct, bsm, bdose, bpdm, **self.aug_params
-                    )
+            for batch in batch_source:
+                if geometric_aug:
+                    bct, bsm, bdose, bpdm = batch  # already augmented (translate/rotate/scale/elastic/noise)
+                else:
+                    bct, bsm = batch.ct, batch.structure_masks
+                    bdose, bpdm = batch.dose, batch.possible_dose_mask
 
                 # Convert to tensors (convert_to_tensor allows overlap)
                 ct = tf.convert_to_tensor(bct, dtype=tf.float32)

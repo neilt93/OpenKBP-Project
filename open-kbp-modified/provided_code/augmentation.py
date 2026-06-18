@@ -34,8 +34,13 @@ from scipy.ndimage import gaussian_filter, map_coordinates
 
 # scipy's map_coordinates/gaussian_filter are C extensions that release the GIL, so the
 # per-sample augmentation parallelizes across cores with threads (no pickling/copy cost
-# like processes). Sized to the box; cheap to keep one persistent pool.
-_POOL = ThreadPoolExecutor(max_workers=min((os.cpu_count() or 4), 16))
+# like processes). Sized to the box; cheap to keep one persistent pool. On a many-core box
+# the batch-level prefetcher (network_functions) runs several batches concurrently, so this
+# pool must be wide enough to hold (prefetch_depth * batch_size) per-sample tasks at once —
+# that is what keeps ~tens of cores busy and the GPU fed. Override with AUG_POOL_WORKERS.
+_POOL = ThreadPoolExecutor(
+    max_workers=int(os.environ.get("AUG_POOL_WORKERS", min((os.cpu_count() or 4), 64)))
+)
 
 
 def _sampling_coords(
