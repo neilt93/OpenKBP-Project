@@ -1,0 +1,14 @@
+# Perturbation generation on the TRAINING split (pt_1-200), LOCAL paths for RunPod.
+# Same as train.yaml but writes data_perturbed_train INSIDE the workspace (no absolute
+# warehouse path), so the symlinked dose/masks resolve on the RunPod box.
+# (Perturbation levels come from the perturbation classes, not this file.)
+seed: 42
+
+paths:
+  validation_data: "provided-data/train-pats"           # SOURCE = training CTs
+  output_root: "openkbp_hn_robustness"
+  data_perturbed: "openkbp_hn_robustness/data_perturbed_train"   # local, in-workspace
+
+patients:
+  start: 1
+  end: 200

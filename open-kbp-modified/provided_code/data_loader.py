@@ -20,6 +20,20 @@ class DataLoader:
     CT_MAX = 4095.0    # 12-bit max value per official docs
     DOSE_PRESCRIPTION = 70.0  # Prescription dose in Gy for normalization
 
+    # Compact cache dtypes (the cache stacks EVERY patient in RAM). The default float64
+    # is ~218 MB/patient (structure_masks alone is 128^3 x 10 x 8 bytes = 33.6 GB for 200
+    # patients) — uncacheable once perturbed-set injection multiplies the patient count.
+    # Binary masks -> uint8, normalized ct/dose -> float32: ~5x less RAM (~40 MB/patient),
+    # so ~1000 patients fits a 64 GB box. Storage-only: everything is cast to float32 at
+    # batch time (tf.convert_to_tensor / augmentation), so it's numerically harmless.
+    CACHE_DTYPES = {
+        "structure_masks": np.uint8,
+        "possible_dose_mask": np.uint8,
+        "ct": np.float32,
+        "dose": np.float32,
+        "predicted_dose": np.float32,
+    }
+
     def __init__(self, patient_paths: List[Path], batch_size: int = 2, cache_data: bool = True, normalize: bool = True, precomputed_path: Optional[Path] = None):
         """
         :param patient_paths: list of the paths where data for each patient is stored
@@ -212,5 +226,12 @@ class DataLoader:
             elif key in ("dose", "predicted_dose"):
                 # Dose normalization: divide by prescription dose (70 Gy)
                 shaped_data = shaped_data / self.DOSE_PRESCRIPTION
+
+        # Downcast to the compact cache dtype (storage-only; cast back to float32 at batch
+        # time). Skips voxel_dimensions (tiny, keep full precision). NB: masks/pdm become
+        # uint8 only because they are binary {0,1}; do not store non-binary data this way.
+        cache_dtype = self.CACHE_DTYPES.get(key)
+        if cache_dtype is not None and shaped_data.dtype != cache_dtype:
+            shaped_data = shaped_data.astype(cache_dtype)
 
         return shaped_data

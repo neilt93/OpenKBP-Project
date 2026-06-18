@@ -51,9 +51,12 @@ python runpod_train.py \
   DataLoader keys patients by `path.stem`, so unique names are required (raw `pt_3` dirs
   would collide and collapse variants). `--inject-reuse-existing` also produces unique
   names — use it only if a perturbed dir carries its own (non-symlinked) dose/masks.
-- **Caching + RAM:** the loader pre-stacks ALL training patients in RAM. Injecting
-  thousands of variants will OOM — keep the count sane via families/levels/max-per-patient
-  (or train with `--no-cache`).
+- **Caching + RAM:** the loader pre-stacks ALL training patients in RAM. The cache dtype
+  is now compact (masks/possible_dose_mask `uint8`, ct/dose `float32`) = **~40 MB/patient**
+  (was 218 MB as float64), so 1000 patients (1:4 injection) ≈ **40 GB** — fits a 64 GB box
+  with caching on. Still keep the count sane via families/levels/max-per-patient; for very
+  large injections use `--no-cache` (slower, disk-bound). (The old `train_data.npz`
+  precomputed cache is float64 — don't reuse it; let the loader preload fresh.)
 
 - `--inject-glob` must match the real layout (see `--inspect`); `{pid}` marks the patient id.
 - `--inject-reuse-existing` if a perturbed dir already contains dose + masks (else CT is
