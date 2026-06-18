@@ -23,11 +23,18 @@ interpolation, not one-per-op) to avoid compounding blur.
 """
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 import numpy as np
 from numpy.typing import NDArray
 from scipy.ndimage import gaussian_filter, map_coordinates
+
+# scipy's map_coordinates/gaussian_filter are C extensions that release the GIL, so the
+# per-sample augmentation parallelizes across cores with threads (no pickling/copy cost
+# like processes). Sized to the box; cheap to keep one persistent pool.
+_POOL = ThreadPoolExecutor(max_workers=min((os.cpu_count() or 4), 16))
 
 
 def _sampling_coords(
@@ -159,14 +166,24 @@ def augment_batch(
 
     Drop-in for the training loop: call on the numpy batch before tensor conversion.
     `kwargs` are the per-sample augmentation strengths (see `augment_sample`).
+
+    Samples are augmented in parallel across CPU threads (the heavy scipy ops release the
+    GIL). Each sample gets its OWN rng seeded from `rng` — numpy Generators are not
+    thread-safe to share, and this also makes augmentation reproducible given a seeded rng.
     """
     rng = rng or np.random.default_rng()
     out_ct = np.empty_like(ct, dtype=np.float32)
     out_sm = np.empty_like(structure_masks, dtype=np.float32)
     out_dose = np.empty_like(dose, dtype=np.float32)
     out_pdm = np.empty_like(possible_dose_mask, dtype=np.float32)
-    for b in range(ct.shape[0]):
+    B = ct.shape[0]
+    seeds = rng.integers(0, 2**31 - 1, size=B)  # per-sample, parent-derived (thread-safe)
+
+    def _work(b):
         out_ct[b], out_sm[b], out_dose[b], out_pdm[b] = augment_sample(
-            ct[b], structure_masks[b], dose[b], possible_dose_mask[b], rng, **kwargs
+            ct[b], structure_masks[b], dose[b], possible_dose_mask[b],
+            np.random.default_rng(seeds[b]), **kwargs
         )
+
+    list(_POOL.map(_work, range(B)))  # writes to disjoint b-slices -> no data race
     return out_ct, out_sm, out_dose, out_pdm

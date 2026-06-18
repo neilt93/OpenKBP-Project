@@ -39,3 +39,4 @@ submissions/
 
 # Claude config
 .claude/
+**/data_perturbed_train

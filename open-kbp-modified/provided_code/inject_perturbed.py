@@ -97,8 +97,9 @@ def build_injected_set(
     pattern = glob.replace("{pid}", "*")
     composed: List[Path] = []
     per_patient: dict = {}
-    n_holdout_skipped = n_orphan = 0
+    n_holdout_skipped = n_orphan = n_globbed = 0
     for ct_path in sorted(perturbed_root.glob(pattern)):
+        n_globbed += 1
         pid = _patient_id(ct_path)
         if pid is None:
             continue
@@ -137,12 +138,23 @@ def build_injected_set(
         composed.append(compose_injected_patient(original_dir, ct_path, out_dir))
 
     if not composed:
+        if n_globbed == 0:
+            raise RuntimeError(
+                f"No ct.csv matched glob '{pattern}' under {perturbed_root}. Check the "
+                f"--perturbed-root path (is the warehouse mounted / symlink present?) and "
+                f"the --inject-glob pattern. Use --inspect to see the real layout."
+            )
+        if n_holdout_skipped and not n_orphan:
+            raise RuntimeError(
+                f"Injected 0: all {n_holdout_skipped} matched CTs are held-out (validation) "
+                f"ids. The perturbed sets are the VALIDATION split — regenerate perturbations "
+                f"on the TRAINING CTs (do NOT inject validation; it leaks the test set)."
+            )
         raise RuntimeError(
-            f"Injected 0 perturbed patients (held-out-skipped={n_holdout_skipped}, "
-            f"orphan/no-clean-match={n_orphan}). The perturbed sets likely use the "
-            f"VALIDATION split (pt_201-240), not training. Verify with --inspect. Do NOT "
-            f"point --original-root at validation-pats — that leaks the test set. "
-            f"Regenerate perturbations on the TRAINING CTs instead."
+            f"Injected 0 perturbed patients (globbed={n_globbed}, held-out-skipped="
+            f"{n_holdout_skipped}, orphan/no-clean-match={n_orphan}). After family/level "
+            f"filters nothing remained, or no clean training patient matched. Check "
+            f"--inject-families/--inject-levels and that --original-root is the train split."
         )
     if n_holdout_skipped:
         print(f"  [leakage guard] skipped {n_holdout_skipped} perturbed CTs whose id is in the held-out set")

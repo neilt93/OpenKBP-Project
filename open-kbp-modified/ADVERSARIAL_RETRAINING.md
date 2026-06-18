@@ -61,14 +61,24 @@ python runpod_train.py \
 - Geometric flags turn on the numpy augmentation path (includes flips+intensity); needs
   `--no-jit`. Validation predictions/scoring are unchanged (clean validation set).
 
-## ⚠️ Throughput — measure before a full run
+## Throughput — measured (Mac, 14 cores)
 
-Geometric augmentation runs `scipy.ndimage.map_coordinates` over 13 channels (1 CT + 10
-masks + dose + possible_dose_mask) × 128³ per sample, in the training loop on CPU (~1–3 s/
-sample). Over 100 epochs that can dwarf GPU time. **Time one epoch first.** If it starves the
-GPU, move augmentation into a prefetched/parallel path (tf.data parallel `map`, or loader-side
-multiprocessing) before committing to the full run. Injection has no such cost (it only adds
-patient dirs).
+Geometric augmentation runs `scipy.ndimage` ops over 13 channels (1 CT + 10 masks + dose +
+possible_dose_mask) × 128³ per sample. `augment_batch` parallelizes samples across CPU
+threads (the scipy ops release the GIL), measured on a 14-core Mac with the full
+geometric+elastic+noise params at batch 4:
+
+| | per batch | per sample | epoch aug @ 1:4 inject (1000 pts) |
+|---|---|---|---|
+| serial (old) | 2.07 s | 0.52 s | 8.6 min |
+| **threaded (now)** | **0.63 s** | **0.16 s** | **2.6 min** |
+
+So ~2.6 min/epoch of aug at the recommended injection size — tolerable, but on a fast GPU
+it still won't fully overlap. For the real 100-epoch run, **prefetch** augmentation (run it
+in a background thread / `tf.data` parallel `map` while the GPU computes the previous batch)
+to hide it entirely; that's a training-loop change to make on the GPU box. Injection itself
+has no per-step cost (it only adds patient dirs). `augment_batch` is deterministic given a
+seeded rng (pass one from the trainer for reproducible ensembles).
 
 ## Files
 
