@@ -15,7 +15,10 @@ the operational checklist.
   batch size (OOM). No A100/H100 needed.
 - **RAM:** ≥ 64 GB (the data cache is ~40 MB/patient; ~1000 patients ≈ 40 GB).
 - **CPU:** 8–16 cores help (augmentation is threaded).
-- **Disk:** ~30 GB.
+- **Disk:** **≥ 40 GB recommended.** On a tight 32 GB box it still fits IF you generate
+  ONLY the perturbations you inject (§2) and keep few checkpoints (`--keep-history 2`).
+  The full P1–P5 × 5-level set (~17 GB) will overflow alongside TF/CUDA (~6 GB) + data +
+  checkpoints — don't generate it.
 
 Verify first: `nvidia-smi` (GPU visible), `python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"`.
 
@@ -28,18 +31,25 @@ pip install tensorflow[and-cuda]==2.18.0 pandas numpy scipy tqdm more_itertools 
 TensorFlow MUST be 2.18.0 (the best model was trained with it; mixed-precision float16
 checkpoints are version-sensitive).
 
-## 2. Data (transfer ~3.7 GB, then generate perturbations on-box)
-The perturbed sets on the user's machine symlink to absolute Mac paths and WON'T transfer —
-so regenerate them here. Transfer only:
-- `open-kbp-modified/provided-data/` (train-pats + validation-pats, ~2 GB) — via `runpodctl`.
-- the baseline model `epoch_100.keras` (~1.7 GB) → put at
-  `open-kbp-modified/results/iteration2_ctmax4095/models/epoch_100.keras`.
+## 2. Data (pull public data on-box; only the model comes from the Mac)
+- **`provided-data/`** is the **public OpenKBP dataset** — pull it directly on this box
+  (fast) into `open-kbp-modified/provided-data/`. Sparse-checkout `train-pats` +
+  `validation-pats` only (skip `test-pats` to save disk). Source:
+  `https://github.com/ababier/open-kbp` (verify split: train=pt_1–200, validation=pt_201+).
+- **`epoch_100.keras`** (~1.7 GB) is private (the trained model) — the USER rsyncs it from
+  their Mac to `open-kbp-modified/results/iteration2_ctmax4095/models/epoch_100.keras`.
+  (Print this box's SSH host/port so they can run the rsync.)
+- The perturbed sets on the user's Mac symlink to absolute paths and WON'T transfer — so
+  regenerate them here.
 
-Then generate the TRAINING-split perturbations locally (CPU, ~25–40 min):
+Generate ONLY the perturbations you'll inject (disk!): P2 + P4 at L3,L4 (CPU, ~10 min):
 ```bash
 cd open-kbp-modified
-python openkbp_hn_robustness/generate_perturbed_data.py --config openkbp_hn_robustness/configs/train_runpod.yaml
-# writes openkbp_hn_robustness/data_perturbed_train/<family>/<level>/pt_1..200/  (5000 CTs)
+python openkbp_hn_robustness/generate_perturbed_data.py \
+    --config openkbp_hn_robustness/configs/train_runpod.yaml \
+    --perturbations P2_bone_shift P4_resolution --levels L3 L4
+# ~800 CTs (~3 GB) = exactly what the recommended injection (§3) uses. Do NOT generate all
+# P1-P5 x 5 levels (5000 CTs, ~17 GB) — it overflows a 32 GB disk and isn't injected.
 ```
 Sanity-check it's the TRAINING split (must be pt_1..200, NOT pt_201+):
 ```bash
