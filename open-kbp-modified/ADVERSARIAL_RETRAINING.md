@@ -8,23 +8,23 @@ perturbed-CT sets** into the training group and (2) adding **geometric augmentat
 All new code is numpy/scipy + small training hooks; unit-tested off-GPU:
 `python tests/test_augmentation.py` and `python tests/test_inject.py`.
 
-## ⚠️ BLOCKER — verify the patient split before any training run
+## Patient split — RESOLVED (2026-06-18)
 
-The perturbation sets were generated for the **robustness study, which evaluated on the
-held-out validation patients (pt_201–240)**. Injecting those into training **leaks the test
-set** and invalidates every DVH/Dose score. Guards are in place, but confirm the split first:
+Confirmed the original `data_perturbed/` is the **validation split (pt_201–243)** — its
+generator docstring says "perturbed copies of *validation* patient CT volumes". Injecting
+those would leak the test set. **Fix applied:** regenerated the same families on the
+**training CTs (pt_1–200)** into a separate dir via
+`openkbp_hn_robustness/configs/train.yaml`:
 
 ```bash
-# with the warehouse mounted:
-python -m provided_code.inject_perturbed --perturbed-root <data_perturbed> --inspect
-#  -> are the patient ids <= pt_200 (training, OK) or pt_201-240 (validation, NOT OK)?
+python openkbp_hn_robustness/generate_perturbed_data.py --config openkbp_hn_robustness/configs/train.yaml
+#  -> writes <warehouse>/.../openkbp_hn_robustness/data_perturbed_train/<family>/<level>/pt_<=200/
 ```
 
-- If the ids are **validation (pt_201–240)**: the existing sets are the **wrong split** for
-  injection — you must **regenerate the perturbations on the TRAINING CTs** (pt_1–200).
-- The injector **never** composes a held-out id (it derives them from `validation-pats`) and
-  **raises loudly if 0 patients match** — so you cannot silently train on nothing, and you
-  cannot "fix" a 0-match by pointing `--original-root` at `validation-pats` (that would leak).
+Each generated dir is a COMPLETE training sample: a real perturbed `ct.csv` + symlinked
+clean dose/masks from the original patient — so inject with `--inject-reuse-existing` (no
+re-composition needed). Safety net still on: the injector derives held-out ids from
+`validation-pats`, never injects them, and raises loudly on 0-match.
 
 ## Decisions to make (shape the trained model)
 
@@ -40,11 +40,13 @@ python -m provided_code.inject_perturbed --perturbed-root <data_perturbed> --ins
 ```bash
 python runpod_train.py \
     --filters 64 --epochs 100 --use-se --batch-size 4 --ptv-weight 4.0 --no-jit \
-    --inject-perturbed openkbp_hn_robustness/data_perturbed \
-    --inject-glob '*/*/{pid}/ct.csv' \
+    --inject-perturbed openkbp_hn_robustness/data_perturbed_train \
+    --inject-glob '*/*/{pid}/ct.csv' --inject-reuse-existing \
     --inject-families P2 P4 --inject-levels L3 L4 --inject-max-per-patient 4 \
     --aug-translate 0.08 --aug-rotate 10 --aug-scale 0.1 --aug-elastic 3 --aug-noise 0.02
 ```
+(`data_perturbed_train` is the training-split set; the original `data_perturbed` is
+validation-only — do NOT inject it.)
 
 - `--inject-glob` must match the real layout (see `--inspect`); `{pid}` marks the patient id.
 - `--inject-reuse-existing` if a perturbed dir already contains dose + masks (else CT is
