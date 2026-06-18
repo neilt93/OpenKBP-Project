@@ -34,6 +34,11 @@ def augment_batch_tf(ct: tf.Tensor, structure_masks: tf.Tensor, dose: tf.Tensor,
     Returns:
         Augmented (ct, structure_masks, dose, possible_dose_mask) tuple
     """
+    # NOTE (legacy path): axis labels here are mislabeled. Verified on real data the BDHWC
+    # axes are D=A-P, H(axis2)=L-R, W(axis3)=S-I — so "axis 3" below is actually an S-I
+    # (head-to-toe) flip and "axis 2" is the true L-R flip. Behavior is UNCHANGED (this is
+    # what the best model trained with); the anatomically-correct augmentation lives in
+    # provided_code.augmentation (used via aug_params / --aug-*).
     # Random left-right flip (axis 3 in BDHWC format)
     do_lr_flip = tf.random.uniform([]) < flip_prob
     ct = tf.cond(do_lr_flip, lambda: tf.reverse(ct, axis=[3]), lambda: ct)

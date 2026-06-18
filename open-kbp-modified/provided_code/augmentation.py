@@ -4,8 +4,9 @@ Pure numpy/scipy (NO TensorFlow) so it is unit-testable off-GPU. The training lo
 (`network_functions`) calls `augment_batch` on the numpy batch *before* the tensor
 conversion; XLA is off in practice (`--no-jit`), so CPU augmentation is fine.
 
-Volume layout is OpenKBP BDHWC: (batch, D=S-I, H=A-P, W=L-R, channels). Two kinds of
-augmentation, deliberately distinct:
+Volume layout is OpenKBP BDHWC: (batch, D, H, W, channels). Anatomical axes verified on
+real data via parotid/PTV landmarks: D(axis0)=A-P, H(axis1)=L-R, W(axis2)=S-I. The axial
+plane (isotropic 5.422 mm) is (D, H). Two kinds of augmentation, deliberately distinct:
 
   * GEOMETRIC (flips, translation, in-plane rotation, scaling, elastic): applied to the
     CT *and* the structure masks, dose, and possible_dose_mask with the SAME transform
@@ -48,9 +49,14 @@ def _sampling_coords(
 ) -> Optional[NDArray]:
     """Build a (3, D, H, W) array of input coordinates to sample for each output voxel.
 
-    Combines in-plane (axial = H,W) rotation, in-plane scaling, 3D translation and a
-    smooth elastic field into one map. Returns None if no geometric op is active (so the
-    caller can skip resampling entirely).
+    Combines AXIAL rotation, in-plane scaling, 3D translation and a smooth elastic field
+    into one map. Returns None if no geometric op is active (so the caller can skip
+    resampling entirely).
+
+    Axes (verified on real data via parotid/PTV landmarks): D=A-P, H=L-R, W=S-I. The
+    isotropic AXIAL plane is therefore (D, H) = (A-P, L-R) — both 5.422 mm — so rotation
+    (head-tilt) and scaling act on vector components 0,1, leaving W (S-I, coarse 3 mm)
+    fixed. (Rotating in (H,W) would mix the 5.422/3.0 mm axes and isn't an axial rotation.)
     """
     D, H, W = shape
     if rotate_deg <= 0 and scale_range <= 0 and translate_frac <= 0 and elastic_alpha <= 0:
@@ -60,16 +66,14 @@ def _sampling_coords(
     center = np.array([(D - 1) / 2, (H - 1) / 2, (W - 1) / 2], dtype=np.float32).reshape(3, 1, 1, 1)
     coords = grid - center
 
-    # In-plane rotation (axial plane = axes H,W = vector components 1,2) + in-plane scale.
+    # Axial rotation + in-plane scale on components 0,1 (D=A-P, H=L-R); W (S-I) unchanged.
     theta = np.deg2rad(rng.uniform(-rotate_deg, rotate_deg)) if rotate_deg > 0 else 0.0
     c, s = np.cos(theta), np.sin(theta)
     sc = 1.0 + rng.uniform(-scale_range, scale_range) if scale_range > 0 else 1.0
-    # M maps output offset -> input offset. Scale in-plane only (S-I kept at 1.0; coarse
-    # 3 mm slices make through-plane scaling less meaningful).
     M = np.array([
-        [1.0, 0.0, 0.0],
-        [0.0, sc * c, -sc * s],
-        [0.0, sc * s, sc * c],
+        [sc * c, -sc * s, 0.0],
+        [sc * s,  sc * c, 0.0],
+        [0.0,     0.0,    1.0],
     ], dtype=np.float32)
     coords = (M @ coords.reshape(3, -1)).reshape(3, D, H, W) + center
 
@@ -123,13 +127,12 @@ def augment_sample(
     dose = dose.astype(np.float32, copy=True)
     possible_dose_mask = possible_dose_mask.astype(np.float32, copy=True)
 
-    # --- flips (cheap, exact) -------------------------------------------------
-    # Sample axes are (D=0, H=1, W=2, C=3). Matches augment_batch_tf's BDHWC flips:
-    # its axis 3 (W, L-R) -> sample axis 2; its axis 2 (H, A-P) -> sample axis 1.
-    if rng.random() < flip_prob:  # L-R flip (W = sample axis 2)
-        ct = ct[:, :, ::-1]; structure_masks = structure_masks[:, :, ::-1]
-        dose = dose[:, :, ::-1]; possible_dose_mask = possible_dose_mask[:, :, ::-1]
-    if rng.random() < flip_prob:  # A-P flip (H = sample axis 1)
+    # --- L-R flip only (the one anatomically valid flip) ----------------------
+    # H&N is ~bilaterally symmetric, so mirroring left<->right is valid. Sample axes are
+    # (D=A-P, H=L-R, W=S-I), so L-R = axis 1. A-P (axis 0) and S-I (axis 2) flips would put
+    # the patient back-to-front / head-to-toe and are NOT done. (The legacy augment_batch_tf
+    # flips two axes — its axis labels are off; this path is the anatomically-correct one.)
+    if rng.random() < flip_prob:
         ct = ct[:, ::-1]; structure_masks = structure_masks[:, ::-1]
         dose = dose[:, ::-1]; possible_dose_mask = possible_dose_mask[:, ::-1]
 
