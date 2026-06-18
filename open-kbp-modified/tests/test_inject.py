@@ -120,10 +120,36 @@ def test_levels_and_cap():
         print("PASS test_levels_and_cap (level filter + per-patient cap)")
 
 
+def test_reuse_existing_unique_stems():
+    # Regression: reuse_existing must produce UNIQUELY-named dirs, never the raw pt_X dir
+    # (the DataLoader keys patients by path.stem; raw dirs would collide and silently
+    # collapse the clean patient + all perturbed variants to one volume in the cache).
+    with tempfile.TemporaryDirectory() as t:
+        root = Path(t)
+        orig = root / "train-pats" / "pt_5"
+        for f in ("ct.csv", "dose.csv", "PTV70.csv", "possible_dose_mask.csv"):
+            _write(orig / f, f)
+        for fam in ("P2_bone_shift", "P4_resolution"):
+            d = root / "dp" / fam / "L4" / "pt_5"
+            _write(d / "ct.csv", f"pert_{fam}")        # real perturbed CT
+            for f in ("dose.csv", "PTV70.csv", "possible_dose_mask.csv"):
+                (d / f).symlink_to((orig / f).resolve())  # dose/masks already present
+        dirs = _inj.build_injected_set(root / "train-pats", root / "dp", root / "out",
+                                       glob="*/*/{pid}/ct.csv", reuse_existing=True)
+        stems = [d.name for d in dirs]
+        assert len(set(stems)) == len(stems) == 2, f"stems must be unique, got {stems}"
+        assert all(s != "pt_5" for s in stems), f"must not be raw pt_5 dir: {stems}"
+        for d in dirs:  # each composed dir is complete: perturbed ct + clean dose
+            assert (d / "ct.csv").read_text().startswith("pert_")
+            assert (d / "dose.csv").read_text() == "dose.csv"
+        print("PASS test_reuse_existing_unique_stems (no DataLoader stem collision)")
+
+
 if __name__ == "__main__":
     test_compose_and_build()
     test_family_filter()
     test_leakage_guard_skips_holdout()
     test_raises_when_all_holdout()
     test_levels_and_cap()
+    test_reuse_existing_unique_stems()
     print("\nALL INJECTION TESTS PASSED")

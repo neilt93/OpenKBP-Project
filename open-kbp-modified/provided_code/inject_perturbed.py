@@ -117,10 +117,23 @@ def build_injected_set(
         if max_per_patient is not None and per_patient.get(pid, 0) >= max_per_patient:
             continue
         per_patient[pid] = per_patient.get(pid, 0) + 1
-        if reuse_existing and (ct_path.parent / "dose.csv").exists():
-            composed.append(ct_path.parent)
-            continue
+        # Unique out-dir name is REQUIRED: the DataLoader keys patients by path.stem
+        # (data_loader.py: _patient_to_idx[path.stem]=idx). If two paths share a stem the
+        # later silently overwrites the earlier, so every clean pt_X + all its perturbed
+        # variants would collapse to one volume. f"{pid}__{tag}" keeps stems unique.
         out_dir = out_root / f"{pid}__{tag}"
+        if reuse_existing and (ct_path.parent / "dose.csv").exists():
+            # perturbed dir already has dose+masks (e.g. symlinked from the original):
+            # symlink them all into the uniquely-named out_dir (do NOT append the raw
+            # perturbed dir — its stem is just pid and would collide as above).
+            out_dir.mkdir(parents=True, exist_ok=True)
+            for f in sorted(ct_path.parent.iterdir()):
+                link = out_dir / f.name
+                if link.is_symlink() or link.exists():
+                    link.unlink()
+                link.symlink_to(f.resolve())
+            composed.append(out_dir)
+            continue
         composed.append(compose_injected_patient(original_dir, ct_path, out_dir))
 
     if not composed:

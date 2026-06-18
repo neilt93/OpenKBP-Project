@@ -117,12 +117,12 @@ def augment_sample(
     possible_dose_mask = possible_dose_mask.astype(np.float32, copy=True)
 
     # --- flips (cheap, exact) -------------------------------------------------
-    # axis 2 = A-P (H), axis 1 = L-R within a single (D,H,W,C) sample is axis 2; match the
-    # existing convention: flip H (axis1 here) and W (axis2 here).
-    if rng.random() < flip_prob:  # L-R flip (W)
+    # Sample axes are (D=0, H=1, W=2, C=3). Matches augment_batch_tf's BDHWC flips:
+    # its axis 3 (W, L-R) -> sample axis 2; its axis 2 (H, A-P) -> sample axis 1.
+    if rng.random() < flip_prob:  # L-R flip (W = sample axis 2)
         ct = ct[:, :, ::-1]; structure_masks = structure_masks[:, :, ::-1]
         dose = dose[:, :, ::-1]; possible_dose_mask = possible_dose_mask[:, :, ::-1]
-    if rng.random() < flip_prob:  # A-P flip (H)
+    if rng.random() < flip_prob:  # A-P flip (H = sample axis 1)
         ct = ct[:, ::-1]; structure_masks = structure_masks[:, ::-1]
         dose = dose[:, ::-1]; possible_dose_mask = possible_dose_mask[:, ::-1]
 

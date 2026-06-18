@@ -41,12 +41,19 @@ re-composition needed). Safety net still on: the injector derives held-out ids f
 python runpod_train.py \
     --filters 64 --epochs 100 --use-se --batch-size 4 --ptv-weight 4.0 --no-jit \
     --inject-perturbed openkbp_hn_robustness/data_perturbed_train \
-    --inject-glob '*/*/{pid}/ct.csv' --inject-reuse-existing \
+    --inject-glob '*/*/{pid}/ct.csv' \
     --inject-families P2 P4 --inject-levels L3 L4 --inject-max-per-patient 4 \
     --aug-translate 0.08 --aug-rotate 10 --aug-scale 0.1 --aug-elastic 3 --aug-noise 0.02
 ```
-(`data_perturbed_train` is the training-split set; the original `data_perturbed` is
-validation-only — do NOT inject it.)
+- `data_perturbed_train` is the training-split set; the original `data_perturbed` is
+  validation-only — do NOT inject it.
+- Default compose builds uniquely-named patient dirs (`pt_3__P2_bone_shift_L4`); the
+  DataLoader keys patients by `path.stem`, so unique names are required (raw `pt_3` dirs
+  would collide and collapse variants). `--inject-reuse-existing` also produces unique
+  names — use it only if a perturbed dir carries its own (non-symlinked) dose/masks.
+- **Caching + RAM:** the loader pre-stacks ALL training patients in RAM. Injecting
+  thousands of variants will OOM — keep the count sane via families/levels/max-per-patient
+  (or train with `--no-cache`).
 
 - `--inject-glob` must match the real layout (see `--inspect`); `{pid}` marks the patient id.
 - `--inject-reuse-existing` if a perturbed dir already contains dose + masks (else CT is

@@ -158,8 +158,9 @@ def main():
     print(f"Found {len(training_plan_paths)} training patients")
 
     # Inject pre-generated perturbed-CT sets (perturbed CT + clean dose/masks) so the
-    # model learns to predict the correct dose despite a corrupted CT.
-    if args.inject_perturbed:
+    # model learns to predict the correct dose despite a corrupted CT. (Only when
+    # training — no point building injected dirs for --predict-only / --eval-only.)
+    if args.inject_perturbed and not (args.predict_only or args.eval_only):
         from provided_code.inject_perturbed import build_injected_set
         inject_out = Path(args.inject_out) if args.inject_out else Path(args.inject_perturbed) / "_injected"
         # Leakage guard: the validation patients must never enter training. Derive their
