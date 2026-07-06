@@ -91,55 +91,36 @@ def augment_batch(ct: np.ndarray, structure_masks: np.ndarray, dose: np.ndarray,
     return ct, structure_masks, dose
 
 
-def histogram_percentile(values: tf.Tensor, percentile: float, num_bins: int = 100) -> tf.Tensor:
-    """
-    Fast differentiable percentile using histogram-based approximation.
+def differentiable_percentile(values: tf.Tensor, percentile: float) -> tf.Tensor:
+    """Exact percentile via a hard sort + linear interpolation, differentiable.
 
-    O(n + num_bins) instead of O(n²). Much faster and more stable than soft sorting.
+    `tf.sort` is a permutation-gather, so its gradient flows to the two order
+    statistics that bracket the requested rank — which is exactly the subgradient of
+    a percentile. O(n log n), and no soft-sort O(n²).
+
+    This REPLACES the old soft-histogram estimator, whose softmax-over-CDF crossing
+    was biased toward the middle of the distribution. On a PTV (dose tightly
+    concentrated near prescription) that bias produced wrong percentile targets,
+    which is why the DVH loss fought the MAE and made the score worse. This matches
+    numpy's np.percentile(values, percentile, method="linear").
 
     Args:
-        values: 1D tensor of values (float32)
-        percentile: target percentile (0-100)
-        num_bins: number of histogram bins
+        values: tensor of values (any shape; flattened here). float32.
+        percentile: target percentile in [0, 100].
 
     Returns:
-        Approximate percentile value
+        Scalar percentile value (float32).
     """
-    values = tf.cast(values, tf.float32)
-
-    # Get value range
-    v_min = tf.reduce_min(values)
-    v_max = tf.reduce_max(values)
-    v_range = v_max - v_min + 1e-8
-
-    # Normalize values to [0, 1]
-    values_norm = (values - v_min) / v_range
-
-    # Create soft histogram using sigmoid
-    bin_edges = tf.linspace(0.0, 1.0, num_bins + 1)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-
-    # Soft assignment to bins (differentiable)
-    # Each value contributes to nearby bins with Gaussian weight
-    sigma = 1.0 / num_bins
-    values_expanded = tf.expand_dims(values_norm, 1)  # (n, 1)
-    bin_centers_expanded = tf.expand_dims(bin_centers, 0)  # (1, num_bins)
-    weights = tf.exp(-0.5 * tf.square((values_expanded - bin_centers_expanded) / sigma))
-    hist = tf.reduce_sum(weights, axis=0)  # (num_bins,)
-
-    # Normalize to PDF then CDF
-    hist = hist / (tf.reduce_sum(hist) + 1e-8)
-    cdf = tf.cumsum(hist)
-
-    # Find bin where CDF crosses target percentile
-    target = percentile / 100.0
-    # Soft argmax for the crossing point
-    crossing_weights = tf.nn.softmax(-tf.abs(cdf - target) * 20.0)
-    bin_idx = tf.reduce_sum(crossing_weights * tf.cast(tf.range(num_bins), tf.float32))
-
-    # Interpolate to get value
-    percentile_norm = bin_idx / tf.cast(num_bins, tf.float32)
-    return v_min + percentile_norm * v_range
+    values = tf.reshape(tf.cast(values, tf.float32), [-1])
+    n = tf.shape(values)[0]
+    sorted_v = tf.sort(values)
+    rank = (percentile / 100.0) * tf.cast(n - 1, tf.float32)  # numpy "linear" index
+    lo_i = tf.cast(tf.floor(rank), tf.int32)
+    hi_i = tf.minimum(lo_i + 1, n - 1)
+    frac = rank - tf.floor(rank)
+    v_lo = tf.gather(sorted_v, lo_i)
+    v_hi = tf.gather(sorted_v, hi_i)
+    return v_lo + frac * (v_hi - v_lo)
 
 
 class PredictionModel(DefineDoseFromCT):
@@ -261,37 +242,35 @@ class PredictionModel(DefineDoseFromCT):
 
         percentile_list = [1.0, 5.0, 99.0]  # D_99, D_95, D_1
 
-        # Process first sample in batch only (for speed)
-        y_true_0 = y_true[0, ..., 0]  # (D, H, W)
-        y_pred_0 = y_pred[0, ..., 0]
-        masks_0 = structure_masks[0]
+        # Average the DVH loss over EVERY sample in the batch. The old version scored
+        # only sample 0, discarding 3/4 of a batch-4 signal and making the gradient
+        # needlessly noisy.
+        batch_size = y_true.shape[0]
+        if batch_size is None:
+            batch_size = 1  # dynamic-shape fallback: score sample 0 only
 
-        def compute_roi_percentile_loss(roi_idx, percentile):
-            """Compute single percentile loss for one ROI."""
-            roi_mask = masks_0[..., roi_idx]
+        def roi_percentile_loss(true_vol, pred_vol, roi_mask, percentile):
             mask_bool = roi_mask > 0.5
             mask_count = tf.reduce_sum(tf.cast(mask_bool, tf.float32))
 
             def compute_loss():
-                true_dose_roi = tf.boolean_mask(y_true_0, mask_bool)
-                pred_dose_roi = tf.boolean_mask(y_pred_0, mask_bool)
-                true_p = histogram_percentile(true_dose_roi, percentile)
-                pred_p = histogram_percentile(pred_dose_roi, percentile)
+                true_p = differentiable_percentile(tf.boolean_mask(true_vol, mask_bool), percentile)
+                pred_p = differentiable_percentile(tf.boolean_mask(pred_vol, mask_bool), percentile)
                 return tf.abs(true_p - pred_p)
 
-            # Use tf.cond instead of Python if
-            return tf.cond(
-                mask_count >= 10.0,
-                compute_loss,
-                lambda: tf.constant(0.0, dtype=tf.float32)
-            )
+            # tf.cond so an absent/tiny ROI contributes 0 without breaking the graph.
+            return tf.cond(mask_count >= 10.0, compute_loss,
+                           lambda: tf.constant(0.0, dtype=tf.float32))
 
-        # Compute all losses (static unrolling for small loops is OK)
         all_losses = []
-        for roi_idx in target_indices:
-            for percentile in percentile_list:
-                loss = compute_roi_percentile_loss(roi_idx, percentile)
-                all_losses.append(loss)
+        for b in range(batch_size):
+            true_vol = y_true[b, ..., 0]  # (D, H, W)
+            pred_vol = y_pred[b, ..., 0]
+            masks_b = structure_masks[b]
+            for roi_idx in target_indices:
+                roi_mask = masks_b[..., roi_idx]
+                for percentile in percentile_list:
+                    all_losses.append(roi_percentile_loss(true_vol, pred_vol, roi_mask, percentile))
 
         # Stack and compute mean of non-zero losses
         stacked = tf.stack(all_losses)
