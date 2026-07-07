@@ -35,6 +35,20 @@ python tests/test_dvh_percentile.py
 Must print the TF PASS lines (differentiable_percentile matches np.percentile, gradient
 flows, identical-dose error is zero). If it does not, STOP and report — do not train.
 
+## 1.5 GPU saturation check (do this on the FIRST training run)
+We are paying for the 4090, so make sure it is actually being used. During steady state of the
+first run (epoch >= 2, after the one-time data caching), sample utilisation a few times:
+```bash
+nvidia-smi --query-gpu=utilization.gpu,utilization.memory,power.draw --format=csv -l 2
+```
+- **GPU util should be high (ideally > 85%).** Also time epoch 1 vs a later epoch to confirm
+  the ~15-20 min/run estimate.
+- If util is LOW and a CPU core is pinned, the GPU is starved by the CPU augmentation path.
+  The concurrent prefetch (commit `5bd8ecb`) plus 16 vCPU should keep it fed; if it is still
+  starved, note it and raise prefetch workers. **Do NOT increase batch size** — it is fixed at
+  4 to avoid OOM, so "max the GPU" here means keeping it fed, not a bigger batch.
+- Report the steady-state GPU util % and per-epoch time alongside the results.
+
 ## 2. Stage 1 — single-model DVH sweep (measure the gain cheaply first)
 Train the best config WITH the fixed DVH loss, one run per weight. Each is from scratch, 100
 epochs, ~15-20 min on the 4090 (`--use-dvh` forces `--no-jit`; the flag also changes the
