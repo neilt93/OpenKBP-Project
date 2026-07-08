@@ -129,7 +129,9 @@ def run(model, loader, attacks, epsilons, pgd_steps, defense_pairs, n_samples, s
         masks_t = tf.constant(batch.structure_masks, dtype=tf.float32)
         dose_true_t = tf.constant(batch.dose, dtype=tf.float32)
         pdm = batch.possible_dose_mask
-        ref_dose_gy = (batch.dose * loader.DOSE_PRESCRIPTION).flatten()
+        # Mask the reference the SAME way as the prediction (below), so the dose error is
+        # computed consistently inside the possible-dose region for both.
+        ref_dose_gy = (batch.dose * pdm * loader.DOSE_PRESCRIPTION).flatten()
         rng = np.random.default_rng(seed)  # per-patient reset -> reproducible
 
         # Compute each adversarial CT ONCE, reuse across all defences.

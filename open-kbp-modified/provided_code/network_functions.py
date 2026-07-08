@@ -37,24 +37,18 @@ def augment_batch_tf(ct: tf.Tensor, structure_masks: tf.Tensor, dose: tf.Tensor,
     Returns:
         Augmented (ct, structure_masks, dose, possible_dose_mask) tuple
     """
-    # NOTE (legacy path): axis labels here are mislabeled. Verified on real data the BDHWC
-    # axes are D=A-P, H(axis2)=L-R, W(axis3)=S-I — so "axis 3" below is actually an S-I
-    # (head-to-toe) flip and "axis 2" is the true L-R flip. Behavior is UNCHANGED (this is
-    # what the best model trained with); the anatomically-correct augmentation lives in
-    # provided_code.augmentation (used via aug_params / --aug-*).
-    # Random left-right flip (axis 3 in BDHWC format)
+    # Verified BDHWC axes: D(axis1)=A-P, H(axis2)=L-R, W(axis3)=S-I. Only the L-R flip
+    # (axis 2) is an anatomically valid augmentation for H&N (left/right symmetry). The
+    # previous version ALSO flipped axis 3 (S-I, i.e. head-to-toe) — an impossible
+    # augmentation that every earlier model trained with; it is removed here. Structure
+    # masks, dose, and the dose mask are flipped together with the CT so the sample stays
+    # self-consistent. (The fuller geometric augmentation is in provided_code.augmentation,
+    # used via aug_params / --aug-*.)
     do_lr_flip = tf.random.uniform([]) < flip_prob
-    ct = tf.cond(do_lr_flip, lambda: tf.reverse(ct, axis=[3]), lambda: ct)
-    structure_masks = tf.cond(do_lr_flip, lambda: tf.reverse(structure_masks, axis=[3]), lambda: structure_masks)
-    dose = tf.cond(do_lr_flip, lambda: tf.reverse(dose, axis=[3]), lambda: dose)
-    possible_dose_mask = tf.cond(do_lr_flip, lambda: tf.reverse(possible_dose_mask, axis=[3]), lambda: possible_dose_mask)
-
-    # Random anterior-posterior flip (axis 2)
-    do_ap_flip = tf.random.uniform([]) < flip_prob
-    ct = tf.cond(do_ap_flip, lambda: tf.reverse(ct, axis=[2]), lambda: ct)
-    structure_masks = tf.cond(do_ap_flip, lambda: tf.reverse(structure_masks, axis=[2]), lambda: structure_masks)
-    dose = tf.cond(do_ap_flip, lambda: tf.reverse(dose, axis=[2]), lambda: dose)
-    possible_dose_mask = tf.cond(do_ap_flip, lambda: tf.reverse(possible_dose_mask, axis=[2]), lambda: possible_dose_mask)
+    ct = tf.cond(do_lr_flip, lambda: tf.reverse(ct, axis=[2]), lambda: ct)
+    structure_masks = tf.cond(do_lr_flip, lambda: tf.reverse(structure_masks, axis=[2]), lambda: structure_masks)
+    dose = tf.cond(do_lr_flip, lambda: tf.reverse(dose, axis=[2]), lambda: dose)
+    possible_dose_mask = tf.cond(do_lr_flip, lambda: tf.reverse(possible_dose_mask, axis=[2]), lambda: possible_dose_mask)
 
     # CT intensity scaling (always apply if intensity_scale > 0, just vary the scale)
     scale = 1.0 + tf.random.uniform([], -intensity_scale, intensity_scale)
@@ -247,7 +241,13 @@ class PredictionModel(DefineDoseFromCT):
         # needlessly noisy.
         batch_size = y_true.shape[0]
         if batch_size is None:
-            batch_size = 1  # dynamic-shape fallback: score sample 0 only
+            # The batch dim must be static so the Python loop below averages over EVERY
+            # sample. The numpy loader traces with a concrete shape; a None here means a
+            # tf.data / symbolic-batch refactor silently broke that guarantee, which would
+            # quietly drop the DVH loss back to scoring only sample 0. Fail loud instead.
+            raise ValueError(
+                "DVH loss requires a static batch dimension, got y_true.shape[0]=None. "
+                "Feed concrete-shaped batches (the numpy DataLoader does).")
 
         def roi_percentile_loss(true_vol, pred_vol, roi_mask, percentile):
             mask_bool = roi_mask > 0.5

@@ -164,8 +164,19 @@ def main():
         from provided_code.inject_perturbed import build_injected_set
         inject_out = Path(args.inject_out) if args.inject_out else Path(args.inject_perturbed) / "_injected"
         # Leakage guard: the validation patients must never enter training. Derive their
-        # ids from the hold-out dir and forbid them in the injection.
-        holdout_ids = {p.name for p in get_paths(validation_data_dir)} if validation_data_dir.exists() else set()
+        # ids from the hold-out dir and forbid them in the injection. Fail LOUD if the
+        # hold-out dir is missing/empty — an empty guard would silently let validation
+        # patients leak in through the injected set.
+        if not validation_data_dir.exists():
+            raise SystemExit(
+                f"Refusing to inject: validation dir {validation_data_dir} not found, so the "
+                "leakage guard would be empty. Point the validation path at the hold-out set "
+                "(pt_201-240) before injecting.")
+        holdout_ids = {p.name for p in get_paths(validation_data_dir)}
+        if not holdout_ids:
+            raise SystemExit(
+                f"Refusing to inject: no hold-out patient ids found in {validation_data_dir}. "
+                "The leakage guard would be empty.")
         injected = build_injected_set(
             training_data_dir, Path(args.inject_perturbed), inject_out,
             glob=args.inject_glob, families=args.inject_families, levels=args.inject_levels,
