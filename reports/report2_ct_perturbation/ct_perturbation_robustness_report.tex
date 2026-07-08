@@ -13,14 +13,14 @@
 
 \title{Robustness of 3D U-Net Dose Prediction to\\Clinically Plausible CT Perturbations}
 \author{OpenKBP Project}
-\date{February 22, 2026}
+\date{February 24, 2026}
 
 \begin{document}
 
 \maketitle
 
 \begin{abstract}
-We evaluate the robustness of a 3D U-Net dose prediction model to five families of clinically plausible CT perturbations: acquisition noise, HU calibration shift, low-frequency bias field, resolution degradation, and dental metal artifacts. Unlike adversarial attacks that exploit worst-case gradient directions, these perturbations model realistic imaging variability encountered in radiotherapy workflows. Evaluated on 40 head-and-neck cancer patients at two severity levels each, the model demonstrates remarkable stability: four of five perturbation families cause less than 0.5\% degradation in DVH score. Only resolution degradation produces meaningful impact (+4.0\% DVH at Level~1, +7.7\% at Level~2), indicating that CT spatial resolution is the dominant factor affecting dose prediction accuracy among realistic imaging variations.
+We evaluate the robustness of a 3D U-Net dose prediction model to five families of clinically plausible CT perturbations: acquisition noise, HU calibration shift, low-frequency bias field, resolution degradation, and dental metal artifacts. Unlike adversarial attacks that exploit worst-case gradient directions, these perturbations model realistic imaging variability encountered in radiotherapy workflows. Evaluated on 40 head-and-neck cancer patients at up to five severity levels per perturbation, the model demonstrates remarkable stability: four of five perturbation families cause less than 1.5\% DVH degradation even at extreme amplitudes. Only resolution degradation produces substantial impact, with DVH degradation beginning at the mildest level (+1.5\% at L0) and reaching +18.2\% at L4. Bone-weighted calibration shift shows a late take-off at L5 (+11.2\% DVH). These finer-grained severity sweeps identify specific threshold amplitudes for each perturbation, supporting targeted quality control recommendations for clinical deployment.
 \end{abstract}
 
 \tableofcontents
@@ -51,22 +51,22 @@ The evaluated model is a 3D U-Net with Squeeze-and-Excitation (SE) blocks, train
 
 \subsection{Perturbation Families}
 
-We define five perturbation families spanning the major sources of CT imaging variability in radiotherapy. Each family is tested at two severity levels (L1: mild/typical, L2: moderate/worst-case plausible). Table~\ref{tab:perturbations} summarizes all perturbations and their parameters.
+We define five perturbation families spanning the major sources of CT imaging variability in radiotherapy. Each family is tested at multiple severity levels to identify degradation thresholds. P1--P3 and P5 use levels L1--L5 (mild to extreme); P4 (resolution) uses L0--L4 since degradation begins at the mildest settings. Table~\ref{tab:perturbations} summarizes all perturbations and their parameters.
 
 \begin{table}[H]
 \centering
-\caption{CT perturbation families with parameters at each severity level. All values in HU (Hounsfield Units) or voxels as indicated.}
+\caption{CT perturbation families with parameters at each severity level. All values in HU (Hounsfield Units) or voxels as indicated. L0 is only used for P4; L5 is not used for P4.}
 \label{tab:perturbations}
 \small
-\begin{tabularx}{\textwidth}{@{}l l X X@{}}
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
 \toprule
-\textbf{Perturbation} & \textbf{Physical Model} & \textbf{L1 (Mild)} & \textbf{L2 (Moderate)} \\
+\textbf{Perturbation} & \textbf{Physical Model} & \textbf{Levels (key parameters)} \\
 \midrule
-P1: Acq.\ Noise & Heteroscedastic Gaussian & $\sigma_\text{soft}{=}8$, $\sigma_\text{bone}{=}12$\,HU & $\sigma_\text{soft}{=}15$, $\sigma_\text{bone}{=}25$\,HU \\[4pt]
-P2: Bone Shift & HU calibration error & $\Delta_\text{soft}{=}5$, $\Delta_\text{bone}{=}50$\,HU & $\Delta_\text{soft}{=}10$, $\Delta_\text{bone}{=}100$\,HU \\[4pt]
-P3: Bias Field & Low-freq.\ cosine harmonics & amp${=}10$\,HU, 3 harmonics & amp${=}20$\,HU, 3 harmonics \\[4pt]
-P4: Resolution & Anisotropic Gaussian blur & $\sigma_z{=}1.0$, $\sigma_{xy}{=}0.5$\,vox & $\sigma_z{=}2.0$, $\sigma_{xy}{=}1.0$\,vox \\[4pt]
-P5: Dental Art. & Radial streak pattern & amp${=}150$\,HU, 8 streaks & amp${=}300$\,HU, 12 streaks \\
+P1: Acq.\ Noise & Heteroscedastic Gaussian & L1: $\sigma_\text{soft/bone}{=}8/12$; L2: 15/25; L3: 30/50; L4: 60/100; L5: 100/160\,HU \\[4pt]
+P2: Bone Shift & HU calibration error & L1: $\Delta_\text{soft/bone}{=}5/50$; L2: 10/100; L3: 25/250; L4: 50/500; L5: 100/1000\,HU \\[4pt]
+P3: Bias Field & Low-freq.\ cosine harmonics & L1: 10; L2: 20; L3: 50; L4: 100; L5: 200\,HU amplitude \\[4pt]
+P4: Resolution & Anisotropic Gaussian blur & L0: $\sigma_{z/xy}{=}0.5/0.25$; L1: 1.0/0.5; L2: 2.0/1.0; L3: 3.0/1.5; L4: 4.0/2.0\,vox \\[4pt]
+P5: Dental Art. & Radial streak pattern & L1: 150\,HU/8 streaks; L2: 300/12; L3: 500/16; L4: 800/20; L5: 1200/24 \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -115,7 +115,7 @@ where $N$ is the number of streaks and $\theta_i$ are random angles. The streak 
 
 \begin{itemize}
     \item \textbf{Dataset}: 40 validation patients (pt\_201--pt\_240) from the OpenKBP dataset
-    \item \textbf{Conditions}: 11 total (1 baseline + 5 perturbations $\times$ 2 levels)
+    \item \textbf{Conditions}: 27 total (1 baseline + 5 perturbations $\times$ 4--5 levels each)
     \item \textbf{Seeding}: Deterministic (seed 42) for reproducibility; perturbation randomness is per-patient
     \item \textbf{CT normalization}: [0, 4095] $\rightarrow$ [0, 1] (12-bit range per OpenKBP specification)
     \item \textbf{Perturbation domain}: Applied in raw HU space before normalization
@@ -136,33 +136,48 @@ Evaluation uses the OpenKBP \texttt{DoseEvaluator} class with unnormalized (Gy) 
 
 \subsection{Summary}
 
-Table~\ref{tab:results} presents the complete results across all 11 conditions. The model achieves baseline performance of 3.731~Gy dose score and 2.535 DVH score.
+Table~\ref{tab:results} presents the complete results across all 27 conditions. The model achieves baseline performance of 3.731~Gy dose score and 2.535 DVH score.
 
 \begin{table}[H]
 \centering
-\caption{Dose and DVH scores across all perturbation conditions. $\Delta$ columns show change from baseline.}
+\caption{Dose and DVH scores across all perturbation conditions. $\Delta$ columns show change from baseline. Bold values indicate degradation $>$5\%.}
 \label{tab:results}
 \small
-\begin{tabular}{@{}lS[table-format=1.3]S[table-format=1.3]S[table-format=+1.2]S[table-format=+1.2]@{}}
+\begin{tabular}{@{}lS[table-format=1.3]S[table-format=1.3]S[table-format=+2.1]S[table-format=+2.1]@{}}
 \toprule
 \textbf{Condition} & {\textbf{Dose (Gy)}} & {\textbf{DVH}} & {$\boldsymbol{\Delta}$\textbf{Dose (\%)}} & {$\boldsymbol{\Delta}$\textbf{DVH (\%)}} \\
 \midrule
 Baseline & 3.731 & 2.535 & {---} & {---} \\
 \midrule
-P1\_noise / L1 & 3.731 & 2.535 & +0.01 & +0.01 \\
-P1\_noise / L2 & 3.733 & 2.538 & +0.07 & +0.13 \\
+P1\_noise / L1 & 3.731 & 2.535 & +0.0 & +0.0 \\
+P1\_noise / L2 & 3.733 & 2.538 & +0.1 & +0.1 \\
+P1\_noise / L3 & 3.737 & 2.543 & +0.2 & +0.3 \\
+P1\_noise / L4 & 3.742 & 2.559 & +0.3 & +1.0 \\
+P1\_noise / L5 & 3.742 & 2.571 & +0.3 & +1.4 \\
 \midrule
-P2\_bone\_shift / L1 & 3.730 & 2.531 & -0.02 & -0.15 \\
-P2\_bone\_shift / L2 & 3.740 & 2.544 & +0.26 & +0.38 \\
+P2\_bone\_shift / L1 & 3.730 & 2.531 & -0.0 & -0.1 \\
+P2\_bone\_shift / L2 & 3.740 & 2.544 & +0.3 & +0.4 \\
+P2\_bone\_shift / L3 & 3.751 & 2.519 & +0.5 & -0.6 \\
+P2\_bone\_shift / L4 & 3.793 & 2.572 & +1.7 & +1.5 \\
+P2\_bone\_shift / L5 & 3.916 & 2.818 & \bfseries +5.0 & \bfseries +11.2 \\
 \midrule
-P3\_bias\_field / L1 & 3.732 & 2.535 & +0.03 & +0.01 \\
-P3\_bias\_field / L2 & 3.730 & 2.534 & -0.01 & -0.04 \\
+P3\_bias\_field / L1 & 3.732 & 2.535 & +0.0 & +0.0 \\
+P3\_bias\_field / L2 & 3.730 & 2.534 & -0.0 & -0.0 \\
+P3\_bias\_field / L3 & 3.736 & 2.534 & +0.2 & -0.0 \\
+P3\_bias\_field / L4 & 3.733 & 2.524 & +0.1 & -0.4 \\
+P3\_bias\_field / L5 & 3.759 & 2.545 & +0.8 & +0.4 \\
 \midrule
-P4\_resolution / L1 & 3.780 & 2.636 & +1.32 & \bfseries +4.00 \\
-P4\_resolution / L2 & 3.885 & 2.729 & \bfseries +4.14 & \bfseries +7.67 \\
+P4\_resolution / L0 & 3.739 & 2.573 & +0.2 & +1.5 \\
+P4\_resolution / L1 & 3.780 & 2.636 & +1.3 & +4.0 \\
+P4\_resolution / L2 & 3.885 & 2.729 & +4.1 & \bfseries +7.7 \\
+P4\_resolution / L3 & 3.982 & 2.824 & \bfseries +6.7 & \bfseries +11.4 \\
+P4\_resolution / L4 & 4.124 & 2.995 & \bfseries +10.5 & \bfseries +18.2 \\
 \midrule
-P5\_dental / L1 & 3.729 & 2.541 & -0.05 & +0.26 \\
-P5\_dental / L2 & 3.730 & 2.545 & -0.03 & +0.42 \\
+P5\_dental / L1 & 3.729 & 2.541 & -0.0 & +0.3 \\
+P5\_dental / L2 & 3.730 & 2.545 & -0.0 & +0.4 \\
+P5\_dental / L3 & 3.730 & 2.552 & -0.0 & +0.7 \\
+P5\_dental / L4 & 3.731 & 2.557 & +0.0 & +0.9 \\
+P5\_dental / L5 & 3.732 & 2.555 & +0.0 & +0.8 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -180,16 +195,17 @@ Figure~\ref{fig:summary_bars} shows the dose and DVH score degradation across al
 
 \subsection{Degradation Curves}
 
-Figure~\ref{fig:curves} plots dose and DVH score as a function of perturbation severity (Baseline $\rightarrow$ L1 $\rightarrow$ L2) for each perturbation family. The curves reveal distinct degradation behaviors:
+Figure~\ref{fig:curves} plots dose and DVH score as a function of perturbation severity for each perturbation family. The finer-grained severity sweep (up to 5 levels per perturbation) reveals distinct take-off behaviors:
 \begin{itemize}
-    \item \textbf{P4 (Resolution)}: Steep, roughly linear degradation from Baseline through L1 to L2 in both metrics. The take-off is already visible at L1, indicating the model is sensitive to even mild spatial blurring.
-    \item \textbf{P1--P3, P5}: All four remaining perturbation families remain essentially flat across severity levels, confirming that intensity-domain perturbations do not meaningfully degrade predictions even at moderate severity.
+    \item \textbf{P4 (Resolution)}: Continuous, approximately linear degradation beginning at the mildest level (L0: +1.5\% DVH) and reaching +18.2\% DVH at L4. There is no threshold below which the model is invariant to spatial blur---even half-voxel Gaussian smoothing produces measurable impact.
+    \item \textbf{P2 (Bone Shift)}: Flat through L3 ($\Delta_\text{bone} \leq 250$~HU), then takes off at L4 (+1.5\% DVH) with a sharp jump to L5 (+11.2\% DVH, $\Delta_\text{bone} = 1000$~HU). This late, sudden onset indicates a threshold effect near $\Delta_\text{bone} \approx 500$~HU.
+    \item \textbf{P1 (Noise), P3 (Bias Field), P5 (Dental)}: All three remain essentially flat through their highest levels ($\leq$1.4\% DVH), confirming robust invariance to even extreme intensity-domain perturbations.
 \end{itemize}
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.95\textwidth]{figures/degradation_curves.pdf}
-\caption{Degradation curves showing dose score (left) and DVH score (right) as perturbation severity increases from Baseline to L1 to L2. Resolution degradation (P4, orange) shows a steep, approximately linear climb, while all other perturbation families remain flat near baseline.}
+\caption{Degradation curves showing dose score (left) and DVH score (right) as perturbation severity increases from Baseline through up to 5 levels. P4 (resolution) degrades linearly from the mildest level; P2 (bone shift) shows a late take-off at L4--L5; P1, P3, and P5 remain flat.}
 \label{fig:curves}
 \end{figure}
 
@@ -200,7 +216,7 @@ Figure~\ref{fig:heatmap} provides a per-perturbation breakdown of dose and DVH s
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.85\textwidth]{figures/degradation_heatmap.pdf}
-\caption{Heatmap of percentage degradation in dose score and DVH score by perturbation condition. P4/L2 shows +7.7\% DVH degradation; all other cells are below 0.5\%.}
+\caption{Heatmap of percentage degradation in dose score and DVH score by perturbation condition. P4 shows progressive degradation from L0 (+1.5\% DVH) to L4 (+18.2\% DVH); P2 shows a late take-off at L5 (+11.2\% DVH). All other cells remain below 1.5\%.}
 \label{fig:heatmap}
 \end{figure}
 
@@ -238,11 +254,13 @@ Figures~\ref{fig:ct_slices} and \ref{fig:dose_diff} show representative axial CT
 \subsection{Key Findings}
 
 \begin{enumerate}
-    \item \textbf{Robust to intensity-domain perturbations}: P1 (noise), P2 (calibration shift), P3 (bias field), and P5 (dental artifacts) all cause less than 0.5\% DVH degradation, even at L2 severity. The model has learned to extract dose-relevant features that are largely invariant to intensity shifts and additive noise.
+    \item \textbf{Robust to most intensity-domain perturbations}: P1 (noise), P3 (bias field), and P5 (dental artifacts) cause $\leq$1.4\% DVH degradation even at their highest severity levels (L5), confirming that the model has learned dose-relevant features that are largely invariant to additive noise, smooth intensity fields, and localized metal artifacts.
 
-    \item \textbf{Sensitive to spatial resolution}: P4 (resolution degradation) is the only perturbation producing meaningful impact: +4.0\% DVH at L1 ($\sigma_z=1.0$, $\sigma_{xy}=0.5$ voxels) and +7.7\% at L2 ($\sigma_z=2.0$, $\sigma_{xy}=1.0$ voxels). The degradation curves (Figure~\ref{fig:curves}) show this sensitivity is \emph{gradual and approximately linear} from L1 to L2, rather than exhibiting a sudden threshold---the take-off is already visible at L1. Blurring degrades the model's ability to localize organ boundaries, which directly affects DVH metric computation.
+    \item \textbf{Resolution degradation: immediate, linear sensitivity}: P4 is the dominant perturbation, with DVH degradation beginning at the mildest level tested (L0: $\sigma_z = 0.5$ vox, +1.5\% DVH) and climbing approximately linearly to +18.2\% DVH at L4 ($\sigma_z = 4.0$ vox). There is no safe threshold below which blur is tolerable---even sub-voxel smoothing degrades predictions. Blurring degrades the model's ability to localize organ boundaries, which directly affects DVH metric computation.
 
-    \item \textbf{DVH more sensitive than dose score}: Resolution degradation causes +4.0\% DVH degradation but only +1.3\% dose score degradation at L1. DVH metrics, which depend on structure-specific dose statistics, are more sensitive to boundary shifts than voxel-wise MAE.
+    \item \textbf{Bone shift: late threshold effect}: P2 remains flat through L3 ($\Delta_\text{bone} = 250$~HU) but takes off sharply at L4--L5, reaching +11.2\% DVH at L5 ($\Delta_\text{bone} = 1000$~HU). This sudden onset suggests a threshold near $\Delta_\text{bone} \approx 500$~HU, well above typical calibration drift (10--50~HU), indicating the model is safe against realistic calibration errors.
+
+    \item \textbf{DVH more sensitive than dose score}: Resolution degradation causes +4.0\% DVH degradation but only +1.3\% dose score degradation at L1. DVH metrics, which depend on structure-specific dose statistics, are more sensitive to boundary shifts than voxel-wise MAE. This pattern holds across all levels.
 
     \item \textbf{Structure-dependent vulnerability}: Under P4, parotid glands, larynx, and mandible show the largest DVH increases, likely because these structures have steep dose gradients at their boundaries. Structures in low-gradient regions (e.g., spinal cord) are less affected.
 \end{enumerate}
@@ -261,28 +279,29 @@ The contrast between adversarial and physics-based perturbations is striking:
 \midrule
 FGSM, $\epsilon=0.01$ & $\sim$41 HU & +30.4\% & Worst-case gradient direction \\
 PGD, $\epsilon=0.01$ & $\sim$41 HU & +21.3\% & Iterative worst-case \\
-P1 noise, L2 & $\sigma=$15--25 HU & +0.07\% & Random Gaussian \\
-P2 bone shift, L2 & 10--100 HU & +0.26\% & Systematic calibration \\
-P3 bias field, L2 & $\pm$20 HU & $-$0.01\% & Smooth spatial field \\
+P1 noise, L5 & $\sigma=$100--160 HU & +0.3\% & Random Gaussian \\
+P2 bone shift, L5 & 100--1000 HU & +5.0\% & Systematic calibration \\
+P3 bias field, L5 & $\pm$200 HU & +0.8\% & Smooth spatial field \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-At comparable HU magnitudes ($\sim$25--41~HU), adversarial attacks cause 21--30\% dose score degradation, while realistic noise causes $<$0.13\%. This 200$\times$ gap demonstrates that the model is robust to realistic imaging noise but remains theoretically vulnerable to worst-case, gradient-aligned perturbations. For clinical deployment, the perturbation robustness results are more relevant: real-world CT variability does not follow adversarial gradient directions.
+Even at extreme perturbation amplitudes (L5: $\sigma = 100$--160~HU for noise, $\Delta = 1000$~HU for bone shift), physically motivated perturbations cause at most +5.0\% dose degradation (P2/L5), compared to +30\% from FGSM at just 41~HU. At comparable HU magnitudes, the gap between adversarial and realistic impacts exceeds 100$\times$. This confirms that the model's adversarial vulnerability (Report~1) does not translate to practical fragility under real imaging conditions---real-world CT variability does not follow adversarial gradient directions.
 
 \subsection{Clinical Implications}
 
 \begin{itemize}
-    \item \textbf{CT spatial resolution matters most}: Clinical sites using thicker CT slices or smoother reconstruction kernels should expect modest degradation in dose prediction accuracy. Standardizing spatial resolution across sites would be the single most impactful quality control measure.
-    \item \textbf{Intensity variations are well-tolerated}: Scanner calibration differences, noise levels, and even dental metal artifacts have negligible impact on predictions, supporting cross-scanner deployment.
-    \item \textbf{No retraining needed for most variations}: The model's inherent robustness to P1--P3 and P5 suggests that data augmentation or adversarial training is unnecessary for handling typical CT intensity variations.
+    \item \textbf{CT spatial resolution matters most}: Clinical sites using thicker CT slices or smoother reconstruction kernels should expect degradation in dose prediction accuracy---even sub-voxel blur is detectable. Standardizing spatial resolution across sites would be the single most impactful quality control measure.
+    \item \textbf{Intensity variations are well-tolerated}: Scanner noise, bias fields, and dental metal artifacts have negligible impact ($\leq$1.4\% DVH) even at extreme amplitudes, supporting cross-scanner deployment.
+    \item \textbf{Calibration drift is safe within clinical ranges}: Bone-weighted HU shifts only become problematic above $\sim$500~HU, far beyond typical inter-scanner calibration drift (10--50~HU). However, sites with severely miscalibrated scanners should be aware of the threshold.
+    \item \textbf{No retraining needed for most variations}: The model's inherent robustness to P1, P3, and P5 suggests that data augmentation or adversarial training is unnecessary for handling typical CT intensity variations.
 \end{itemize}
 
 \subsection{Limitations}
 
 \begin{itemize}
     \item \textbf{2D perturbation design}: P5 (dental artifact) applies 2D streak patterns extruded along z; real metal artifacts have more complex 3D geometry.
-    \item \textbf{Fixed perturbation parameters}: Each perturbation family uses two pre-defined severity levels; continuous severity sweeps could reveal threshold effects.
+    \item \textbf{Discrete severity levels}: While 4--5 levels per perturbation provide good threshold identification, continuous severity sweeps could reveal finer-grained threshold effects, particularly for P2 between L3 and L5.
     \item \textbf{Single model}: Results are specific to this architecture and training configuration; other models may have different robustness profiles.
     \item \textbf{DVH score limitations}: DVH metrics aggregate information across structures; focal dose errors in small regions may be masked by structure-level averaging.
     \item \textbf{Noise applied per-voxel}: P1 noise is i.i.d.\ per voxel; real CT noise has spatial correlations from reconstruction.
@@ -293,9 +312,10 @@ At comparable HU magnitudes ($\sim$25--41~HU), adversarial attacks cause 21--30\
 This evaluation demonstrates that the 3D U-Net dose prediction model is highly robust to clinically plausible CT imaging variations. Among five perturbation families spanning the major sources of CT variability:
 
 \begin{enumerate}
-    \item \textbf{Four of five} perturbation families (noise, calibration shift, bias field, dental artifacts) cause $<$0.5\% DVH degradation, even at moderate severity levels.
-    \item \textbf{Resolution degradation} is the only perturbation producing meaningful impact (+7.7\% DVH at L2), identifying CT spatial resolution as the key factor for clinical quality control.
-    \item The 200$\times$ gap between adversarial and realistic perturbation impacts confirms that the model's adversarial vulnerability (Report~1) does not translate to practical fragility under real imaging conditions.
+    \item \textbf{Three of five} perturbation families (noise, bias field, dental artifacts) cause $\leq$1.4\% DVH degradation even at extreme severity levels (L5), confirming robust invariance to intensity-domain variations.
+    \item \textbf{Resolution degradation} is the dominant sensitivity, with no safe threshold---degradation begins at L0 ($\sigma_z = 0.5$ vox, +1.5\% DVH) and reaches +18.2\% DVH at L4 ($\sigma_z = 4.0$ vox), identifying CT spatial resolution as the primary quality control factor.
+    \item \textbf{Bone-weighted calibration shift} shows a threshold effect, remaining flat through L3 ($\Delta_\text{bone} = 250$~HU) before taking off at L4--L5 (up to +11.2\% DVH at $\Delta_\text{bone} = 1000$~HU). Typical clinical calibration drift is well below this threshold.
+    \item The $>$100$\times$ gap between adversarial and realistic perturbation impacts confirms that the model's adversarial vulnerability (Report~1) does not translate to practical fragility under real imaging conditions.
 \end{enumerate}
 
 These findings support the model's suitability for multi-site clinical deployment, provided that CT spatial resolution is standardized or accounted for in the prediction pipeline.

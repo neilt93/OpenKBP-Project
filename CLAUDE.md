@@ -149,3 +149,14 @@ python plot_adversarial.py --results-dir adversarial_results/
 - `set_mode(mode)`: Configure required data fields and trigger caching
 - `get_batches()`: Iterator yielding `DataBatch` objects
 - `get_patients(patient_list)`: Load specific patients by ID
+
+## Task Tracking
+
+After finishing work, update the project file in the Obsidian task vault:
+
+**File:** `/Users/neiltripathi/Library/Mobile Documents/com~apple~CloudDocs/Tasks/Projects/OpenKBP.md`
+
+- Check off completed tasks (`- [x]`)
+- Add new tasks discovered during the session
+- Add relevant notes (commands, decisions, gotchas, etc.)
+- Update `status` in frontmatter if needed (`active` / `completed` / `on-hold`)

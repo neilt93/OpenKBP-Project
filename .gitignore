@@ -14,6 +14,11 @@ __pycache__/
 # OS files
 .DS_Store
 
+# Secrets (RunPod S3 keys etc.) — never commit
+.env
+*.env
+!.env.example
+
 # IDE
 .vscode/
 .idea/
@@ -39,13 +44,13 @@ submissions/
 
 # Claude config
 .claude/
-
 # Warehouse symlinks — large data moved to SanDisk external drive
 # (the trailing-slash patterns above don't match these symlinks, so list them without slash)
 results
 provided-data
 **/data_perturbed
 **/predictions
+**/data_perturbed_train
 
 # Proton pipeline — local QC venv + generated matRad/QC artifacts (regenerate from data)
 open-kbp-modified/.venv-qc/
