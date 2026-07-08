@@ -77,24 +77,25 @@ openkbp_hn_proton/matrad/batch_generate.sh provided-data/validation-pats 201 240
 
 ## PHASE 3 — retrain the U-Net on proton dose (GPU)
 
-### 3.0 Merge the photon bug fixes first
-`proton-pipeline` predates the photon `adversarial-retraining` fixes (the S-I augmentation flip,
-leakage-guard hardening, DVH-loss fix, etc.). Phase 3 training should use the FIXED code:
+### 3.0 Code is already prepared (no merge needed)
+The photon `adversarial-retraining` fixes (the S-I augmentation flip, leakage-guard hardening,
+DVH-loss fix, and the `--data-dir` flag) are **already merged into `proton-pipeline`** (merge
+commit `b4bf56b`, verified off-box: `test_bugfixes.py`, `test_dvh_percentile.py`, and the proton
+`test_roundtrip.py` all pass). A fresh `git checkout proton-pipeline` has everything — just
+re-confirm on the box:
 ```bash
-git checkout proton-pipeline
-git merge origin/adversarial-retraining   # bring in the training-code fixes; resolve any conflicts
-python tests/test_bugfixes.py && python tests/test_dvh_percentile.py   # confirm fixes intact
+python tests/test_bugfixes.py && python tests/test_dvh_percentile.py && python openkbp_hn_proton/tests/test_roundtrip.py
 ```
-(Only the training code needs merging; the proton module is independent.)
 
 ### 3.1 Train (GPU box, TF 2.18.0, same best config as photon)
-Point the loader at the assembled proton data (`proton-data/`) instead of the photon
-`provided-data/`. The network, loader, sparse-CSV format, and DVH/dose scoring are unchanged —
-only the dose values are proton now.
+Point the loader at the assembled proton data with `--data-dir proton-data` (it expects
+`proton-data/train-pats` and `proton-data/validation-pats`, which `batch_generate.sh` built).
+The network, loader, sparse-CSV format, and DVH/dose scoring are unchanged — only the dose
+values are proton now.
 ```bash
 python runpod_train.py --filters 64 --epochs 100 --use-se --use-aug \
     --use-dvh --dvh-weight 0.02 --batch-size 4 --ptv-weight 4.0 --no-jit \
-    --data-dir proton-data      # (add/confirm a --data-dir flag pointing at the proton split)
+    --data-dir proton-data
 ```
 - Use the photon-winning recipe as the starting point (SE + aug + DVH loss w=0.02, the 1.837
   config), but treat the proton numbers as a fresh baseline — proton dose has different structure,
