@@ -72,6 +72,7 @@ def main():
     parser.add_argument('--no-cache', action='store_true', help='Disable data caching (match original behavior)')
     parser.add_argument('--batch-size', type=int, default=2, help='Batch size (default: 2, reduce if OOM)')
     parser.add_argument('--precomputed', type=str, default=None, help='Path to precomputed train_data.npz for instant loading')
+    parser.add_argument('--data-dir', type=str, default=None, help='Base data dir containing train-pats/ and validation-pats/ (default: <project>/provided-data). Point at proton-data/ for proton training.')
     args = parser.parse_args()
 
     # Set random seeds if specified (for ensemble training)
@@ -144,7 +145,7 @@ def main():
     else:
         results_dir = primary_directory.parent / "results"
 
-    provided_data_dir = primary_directory / "provided-data"
+    provided_data_dir = Path(args.data_dir) if args.data_dir else primary_directory / "provided-data"
     training_data_dir = provided_data_dir / "train-pats"
     validation_data_dir = provided_data_dir / "validation-pats"
 
