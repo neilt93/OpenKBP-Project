@@ -153,13 +153,14 @@ def main():
         return a[d0:d1, h0:h1]
 
     orig_hu = crop(norm_to_true_hu(axial(ct_np, w)))
+    body_crop = crop(body).astype(np.float32)  # mask the perturbation display to the patient
 
     # Per-condition 3-panel figures + a combined grid.
     nrows = len(conds)
     fig, axes = plt.subplots(nrows, 3, figsize=(11, 3.4 * nrows), squeeze=False)
     for r, (label, atk, eps, adv) in enumerate(conds):
         adv_hu = crop(norm_to_true_hu(axial(adv, w)))
-        delta_hu = crop((axial(adv, w) - axial(ct_np, w)) * CT_MAX)  # perturbation in HU
+        delta_hu = crop((axial(adv, w) - axial(ct_np, w)) * CT_MAX) * body_crop  # perturbation in HU, masked to body
         vlim = eps * CT_MAX
         panels = [
             ("Original CT", orig_hu, dict(cmap="gray", vmin=WIN_LO, vmax=WIN_HI)),
@@ -168,7 +169,7 @@ def main():
         ]
         for c, (title, img, kw) in enumerate(panels):
             ax = axes[r, c]
-            im = ax.imshow(img.T, origin="lower", **kw)   # .T so L-R is horizontal
+            im = ax.imshow(img.T, origin="lower", interpolation="bilinear", **kw)   # .T so L-R is horizontal
             ax.set_xticks([]); ax.set_yticks([])
             if r == 0:
                 ax.set_title(title, fontsize=12)
@@ -179,7 +180,7 @@ def main():
         # also save the standalone perturbation + adversarial panel for this condition
         fig1, a1 = plt.subplots(1, 3, figsize=(11, 3.6))
         for c, (title, img, kw) in enumerate(panels):
-            im = a1[c].imshow(img.T, origin="lower", **kw)
+            im = a1[c].imshow(img.T, origin="lower", interpolation="bilinear", **kw)
             a1[c].set_title(title, fontsize=12); a1[c].set_xticks([]); a1[c].set_yticks([])
             if c == 1:
                 plt.colorbar(im, ax=a1[c], fraction=0.046, pad=0.04)
