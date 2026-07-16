@@ -34,9 +34,11 @@ results/
 *-predictions/
 submissions/
 
-# Robustness pipeline generated data (regenerable)
+# Robustness pipeline generated data (regenerable; no-slash also matches symlinks)
 **/data_perturbed/
+**/data_perturbed
 **/predictions/
+**/predictions
 **/metrics/
 **/figures/
 **/logs/
@@ -45,3 +47,29 @@ submissions/
 # Claude config
 .claude/
 **/data_perturbed_train
+
+# LaTeX build artifacts (regenerated on compile)
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# Archives, precomputed data, stray patches
+*.zip
+*.npz
+*.patch
+
+# Warehouse symlinks (no trailing slash so the symlinks match) + eval output dirs
+/results
+open-kbp-modified/results
+open-kbp-modified/provided-data
+open-kbp-modified/adversarial_eval_iteration*/
+open-kbp-modified/dvh_metrics*.csv
+**/qc/
+**/qc_aug*.png
+# Proton generated artifacts (branch proton-pipeline ignores these too)
+open-kbp-modified/openkbp_hn_proton/matrad_cases/
+open-kbp-modified/openkbp_hn_proton/proton_dose/
