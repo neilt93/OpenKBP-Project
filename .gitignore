@@ -73,3 +73,8 @@ open-kbp-modified/dvh_metrics*.csv
 # Proton generated artifacts (branch proton-pipeline ignores these too)
 open-kbp-modified/openkbp_hn_proton/matrad_cases/
 open-kbp-modified/openkbp_hn_proton/proton_dose/
+
+# Report/poster figure outputs (regenerable; consistent with **/figures/ above) + docs
+reports/adversarial_ct_examples/
+reports/report1_adversarial/
+*.docx
