@@ -46,6 +46,29 @@ def norm_to_true_hu(x):
     return x * CT_MAX - HU_OFFSET
 
 
+def to_float32(model):
+    """Rebuild a mixed-precision (float16) model in pure float32.
+
+    The model was trained with mixed_float16; on CPU those float16 casts overflow to
+    NaN in the input gradient, which silently blanks the FGSM/PGD perturbation. Rebuild
+    the architecture with every DTypePolicy forced to float32 and copy the (float32-
+    stored) weights across. On a GPU this is unnecessary, but it is harmless and makes
+    the script portable to CPU / Apple Silicon.
+    """
+    def strip(o):
+        if isinstance(o, dict):
+            if o.get("class_name") == "DTypePolicy" and "float16" in str(o.get("config", {}).get("name", "")):
+                return "float32"
+            return {k: strip(v) for k, v in o.items()}
+        if isinstance(o, list):
+            return [strip(x) for x in o]
+        return o
+    m32 = tf.keras.Model.from_config(strip(model.get_config()),
+                                     custom_objects={"InstanceNormalization": InstanceNormalization})
+    m32.set_weights(model.get_weights())
+    return m32
+
+
 def find_patient(data_dir: Path, pid: str) -> Path:
     for p in sorted(get_paths(data_dir)):
         if Path(p).name == pid:
@@ -89,8 +112,10 @@ def main():
         data_dir = script_dir.parent / "provided-data" / "validation-pats"
 
     print(f"Loading model {args.model}")
+    tf.keras.mixed_precision.set_global_policy("float32")
     model = load_model(args.model, custom_objects={"InstanceNormalization": InstanceNormalization},
                        compile=False, safe_mode=False)
+    model = to_float32(model)  # avoid float16 NaN gradients on CPU (blank perturbation)
 
     patient_path = find_patient(data_dir, args.patient_id)
     loader = DataLoader([patient_path], batch_size=1, normalize=True, cache_data=True)
@@ -113,14 +138,28 @@ def main():
             conds.append((f"{atk.upper()} eps={eps:g} (~{eps*CT_MAX:.0f} HU)", atk, eps, adv))
             print(f"  computed {atk} eps={eps}")
 
-    orig_hu = norm_to_true_hu(axial(ct_np, w))
+    # Crop to the body bounding box so the anatomy fills the frame (drop the black
+    # air border) — much more legible on a poster.
+    body = axial(ct_np, w) > 0.12   # normalised CT above ~air
+    ys, xs = np.where(body)
+    if len(ys):
+        mg = 6
+        d0, d1 = max(int(ys.min()) - mg, 0), min(int(ys.max()) + mg + 1, body.shape[0])
+        h0, h1 = max(int(xs.min()) - mg, 0), min(int(xs.max()) + mg + 1, body.shape[1])
+    else:
+        d0, d1, h0, h1 = 0, body.shape[0], 0, body.shape[1]
+
+    def crop(a):
+        return a[d0:d1, h0:h1]
+
+    orig_hu = crop(norm_to_true_hu(axial(ct_np, w)))
 
     # Per-condition 3-panel figures + a combined grid.
     nrows = len(conds)
     fig, axes = plt.subplots(nrows, 3, figsize=(11, 3.4 * nrows), squeeze=False)
     for r, (label, atk, eps, adv) in enumerate(conds):
-        adv_hu = norm_to_true_hu(axial(adv, w))
-        delta_hu = (axial(adv, w) - axial(ct_np, w)) * CT_MAX  # perturbation in HU
+        adv_hu = crop(norm_to_true_hu(axial(adv, w)))
+        delta_hu = crop((axial(adv, w) - axial(ct_np, w)) * CT_MAX)  # perturbation in HU
         vlim = eps * CT_MAX
         panels = [
             ("Original CT", orig_hu, dict(cmap="gray", vmin=WIN_LO, vmax=WIN_HI)),
