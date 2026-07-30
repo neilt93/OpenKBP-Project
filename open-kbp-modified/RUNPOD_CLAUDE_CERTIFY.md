@@ -35,6 +35,8 @@ git clone https://github.com/ababier/open-kbp.git /tmp/okbp-data
 DATA=/tmp/okbp-data/provided-data/validation-pats
 
 # 4. Model — pull from the RunPod S3 volume bucket (reachable from any region)
+#    NOTE: awscli is NOT preinstalled on the base pod — install it first (pip below, or apt).
+pip install awscli
 export AWS_ACCESS_KEY_ID=...  AWS_SECRET_ACCESS_KEY=...
 aws s3 cp s3://5jwj898h77/models/epoch_100.keras models/epoch_100.keras \
     --region us-ca-2 --endpoint-url https://s3api-us-ca-2.runpod.io
