@@ -14,26 +14,49 @@ runs, watching the gotchas below, and reporting numbers.
 
 ---
 
-## 0. Environment
-- 1x RTX 4090 24 GB, TF 2.18.0 (must match the training version — mixed-precision models are
-  version-sensitive). Batch 1 for both scripts. Do NOT raise it.
-- Durable outputs live under `/workspace`. Validation set = `provided-data/validation-pats`
-  (pt_201-240). Best single model: `results/64filter_100epoch_SE_DVH0.02_AUG_MASK_PTV4.0_NORM/models/epoch_100.keras`
-  (DVH 2.049); baseline `results/64filter_100epoch_SE_AUG_MASK_PTV4.0_NORM/models/epoch_100.keras`
-  (DVH 2.536). Use whichever is present; prefer the DVH0.02 winner.
+## 0. Environment & one-time bootstrap (fresh pod, NO network volume this session)
+- Any box with 1x RTX 4090 24 GB + TF 2.18.0 (must match training — mixed-precision models are
+  version-sensitive). Batch 1 for both scripts; do NOT raise it. ~30 min total, inference only.
+- No network volume today (no 4090 stock in the volume's region), so work on the pod's
+  container disk. Nothing persists after terminate — **copy results off before you stop** (§3).
 
+Bootstrap the pod (copy-paste; fill in the three secrets):
 ```bash
-cd /workspace/openkbp && git checkout adversarial-retraining && git pull
-python tests/test_smoothing_certify.py     # sanity: 7 certificate-math tests must pass
+# 1. Claude Code (native installer; alt: npm i -g @anthropic-ai/claude-code)
+curl -fsSL https://claude.ai/install.sh | bash
+export ANTHROPIC_API_KEY=...          # headless auth — no browser on the pod
+
+# 2. Our code
+cd /workspace && git clone https://github.com/neilt93/OpenKBP-Project.git openkbp
+cd openkbp/open-kbp-modified && git checkout adversarial-retraining
+
+# 3. Validation data — from the PUBLIC OpenKBP repo (our data is gitignored, not in our repo)
+git clone https://github.com/ababier/open-kbp.git /tmp/okbp-data
+DATA=/tmp/okbp-data/provided-data/validation-pats
+
+# 4. Model — pull from the RunPod S3 volume bucket (reachable from any region)
+export AWS_ACCESS_KEY_ID=...  AWS_SECRET_ACCESS_KEY=...
+aws s3 cp s3://5jwj898h77/models/epoch_100.keras models/epoch_100.keras \
+    --region us-ca-2 --endpoint-url https://s3api-us-ca-2.runpod.io
+
+# 5. Python deps + sanity check
+pip install "tensorflow[and-cuda]==2.18.0" pandas numpy scipy tqdm more_itertools
+python tests/test_smoothing_certify.py       # 7 certificate-math tests must pass
 ```
+
+The uploaded model is the **baseline** (`epoch_100.keras`, DVH 2.536) — the only one saved to
+S3. The stronger DVH0.02 single model (2.049) was lost with the old volume; retrain it with
+`runpod_train.py --filters 64 --epochs 100 --use-se --use-aug --batch-size 4 --ptv-weight 4.0
+--dvh-weight 0.02` if you want to certify the better model. Pass `--data-dir $DATA` to both
+scripts below so they find the validation set (it is NOT at the default in-repo path).
 
 ---
 
 ## 1. Bridge experiment — adaptive attack on the noise defence  (~10-15 min for 10 patients)
 
 ```bash
-MODEL=results/64filter_100epoch_SE_DVH0.02_AUG_MASK_PTV4.0_NORM/models/epoch_100.keras
-python adversarial_adaptive.py --model $MODEL \
+MODEL=models/epoch_100.keras          # baseline pulled from S3 in §0 (step 4); $DATA from step 3
+python adversarial_adaptive.py --model $MODEL --data-dir $DATA \
     --epsilons 0.02,0.05 --pgd-steps 10 --eot-samples 8 \
     --defense-sigma 0.1 --defense-samples 8 \
     --n-patients 10 --output adaptive_results/
@@ -59,7 +82,7 @@ gradient estimate if the adaptive attack looks too weak (an under-powered EOT gr
 ## 2. Certification — median randomised smoothing  (~10-20 min for 10 patients, n=100)
 
 ```bash
-python certify_smoothing.py --model $MODEL \
+python certify_smoothing.py --model $MODEL --data-dir $DATA \
     --sigma 0.05 --n-samples 100 --batch-draws 8 \
     --radii 0.5,1.0,2.0 --tol-gy 1.0 --alpha 0.001 \
     --n-patients 10 --output certify_results/
@@ -87,10 +110,21 @@ emitting a fake bound.
 
 ---
 
-## 3. Report back
+## 3. Report back + SAVE RESULTS (no network volume today = pod disk is ephemeral)
 For each script: the summary table, the JSON path, and one sentence on the finding. For the
 bridge experiment specifically, state the non-adaptive vs adaptive recovery gap — that single
 number decides whether the certified-defence framing is motivated.
+
+**Before terminating the pod, push the JSON results to S3 (they are small and will otherwise be
+lost with the container disk):**
+```bash
+aws s3 cp adaptive_results/ s3://5jwj898h77/results/adaptive_results/ --recursive \
+    --region us-ca-2 --endpoint-url https://s3api-us-ca-2.runpod.io
+aws s3 cp certify_results/ s3://5jwj898h77/results/certify_results/ --recursive \
+    --region us-ca-2 --endpoint-url https://s3api-us-ca-2.runpod.io
+```
+(The bucket persists even though no pod/volume is mounted — that is why the S3 upload is the
+durable path this session. Fetch them back locally later with the reverse `aws s3 cp`.)
 
 ## 4. Phase 2 (only if 1-2 land and there is GPU budget)
 Fine-tune the base model on Gaussian-noised CTs (SmoothAdv, Salman et al.) so it predicts well
