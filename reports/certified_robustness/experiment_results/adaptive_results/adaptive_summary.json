@@ -1,0 +1,108 @@
+{
+  "model": "models/epoch_100.keras",
+  "timestamp": "2026-07-30T22:02:58.042806",
+  "n_patients": 10,
+  "epsilons": [
+    0.02,
+    0.05
+  ],
+  "pgd_steps": 10,
+  "eot_samples": 8,
+  "defense_sigma": 0.1,
+  "defense_samples": 8,
+  "records": [
+    {
+      "condition": "clean_undef",
+      "attack": "clean",
+      "epsilon": 0.0,
+      "defended": false,
+      "dose_score": 3.705297838764518,
+      "dvh_score": 2.386793227471871
+    },
+    {
+      "condition": "clean_def",
+      "attack": "clean",
+      "epsilon": 0.0,
+      "defended": true,
+      "dose_score": 3.920203404351722,
+      "dvh_score": 2.3869071476724963
+    },
+    {
+      "condition": "nonadaptive_undef",
+      "attack": "pgd",
+      "epsilon": 0.02,
+      "defended": false,
+      "dose_score": 5.288949419453693,
+      "dvh_score": 3.8062082244276185
+    },
+    {
+      "condition": "nonadaptive_def",
+      "attack": "pgd",
+      "epsilon": 0.02,
+      "defended": true,
+      "dose_score": 4.156380428336432,
+      "dvh_score": 2.3713095685997096
+    },
+    {
+      "condition": "adaptive_def",
+      "attack": "eot_pgd",
+      "epsilon": 0.02,
+      "defended": true,
+      "dose_score": 4.163281663320083,
+      "dvh_score": 2.4006972891230194
+    },
+    {
+      "condition": "nonadaptive_undef",
+      "attack": "pgd",
+      "epsilon": 0.05,
+      "defended": false,
+      "dose_score": 6.269032309610553,
+      "dvh_score": 5.149677932616775
+    },
+    {
+      "condition": "nonadaptive_def",
+      "attack": "pgd",
+      "epsilon": 0.05,
+      "defended": true,
+      "dose_score": 4.44753990296043,
+      "dvh_score": 2.6014040371134066
+    },
+    {
+      "condition": "adaptive_def",
+      "attack": "eot_pgd",
+      "epsilon": 0.05,
+      "defended": true,
+      "dose_score": 4.877280769189969,
+      "dvh_score": 2.9712487402473986
+    }
+  ],
+  "summary": [
+    {
+      "epsilon": 0.02,
+      "dvh_clean": 2.386793227471871,
+      "dvh_attack_damage": 1.4194149969557475,
+      "dvh_nonadaptive_recovered": 1.0109084791307472,
+      "dvh_adaptive_recovered": 0.9902043717440152,
+      "dvh_adaptive_def_score": 2.4006972891230194,
+      "dose_clean": 3.705297838764518,
+      "dose_attack_damage": 1.5836515806891747,
+      "dose_nonadaptive_recovered": 0.7151629846663551,
+      "dose_adaptive_recovered": 0.710805185850123,
+      "dose_adaptive_def_score": 4.163281663320083
+    },
+    {
+      "epsilon": 0.05,
+      "dvh_clean": 2.386793227471871,
+      "dvh_attack_damage": 2.7628847051449044,
+      "dvh_nonadaptive_recovered": 0.9223236462810417,
+      "dvh_adaptive_recovered": 0.7884618523215304,
+      "dvh_adaptive_def_score": 2.9712487402473986,
+      "dose_clean": 3.705297838764518,
+      "dose_attack_damage": 2.5637344708460352,
+      "dose_nonadaptive_recovered": 0.7104840331023161,
+      "dose_adaptive_recovered": 0.5428610319232102,
+      "dose_adaptive_def_score": 4.877280769189969
+    }
+  ],
+  "note": "EOT adaptive attack vs non-adaptive, both read out under the noise defence. Gap in recovered% = obfuscated-gradient component of the empirical defence."
+}
