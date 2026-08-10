@@ -57,7 +57,9 @@ certify() {  # certify <model> <sigma> <radii> <n_samples> <n_patients|-> <outdi
   local M="$1" S="$2" R="$3" N="$4" NP="$5" OUT="$6" np_arg=""
   [ "$NP" != "-" ] && np_arg="--n-patients $NP"
   local ok=0
-  for BD in 32 16 8; do
+  # 32 OOMs on the 4090 (24 GB); 16 runs at ~52 s/patient. Starting at 32 would
+  # burn a guaranteed-failed attempt on each of the 5 certify calls below.
+  for BD in 16 8; do
     echo "--- certify sigma=$S n=$N bd=$BD -> $OUT ---"
     python certify_smoothing.py --model "$M" --data-dir "$DATA" --sigma "$S" \
         --n-samples "$N" --batch-draws "$BD" --radii "$R" --tol-gy 1.0 --alpha 0.001 \
@@ -72,9 +74,19 @@ certify() {  # certify <model> <sigma> <radii> <n_samples> <n_patients|-> <outdi
 
 # --- 0. wait for any running train/certify job so we don't fight for the GPU ---
 banner "queue start; waiting for any running train/certify to finish"
-while pgrep -f "runpod_train.py" >/dev/null 2>&1 || pgrep -f "certify_smoothing.py" >/dev/null 2>&1; do
-  sleep 60
-done
+# Wait on the DRIVER scripts too, not just the python workers. certify_all.sh
+# runs one certify_smoothing.py per sigma, so between sigma=0.05 finishing and
+# sigma=0.10 starting there is a window with no python process alive. A 60 s
+# poll landing in that window would start control training on top of the next
+# certification and contend for (or OOM) the GPU.
+gpu_busy() {
+  pgrep -f "runpod_train.py"        >/dev/null 2>&1 && return 0
+  pgrep -f "certify_smoothing.py"   >/dev/null 2>&1 && return 0
+  pgrep -f "bash ./certify_all.sh"  >/dev/null 2>&1 && return 0
+  pgrep -f "bash ./train_all.sh"    >/dev/null 2>&1 && return 0
+  return 1
+}
+while gpu_busy; do sleep 60; done
 banner "GPU free; starting queue"
 nvidia-smi 2>/dev/null | head -15
 
