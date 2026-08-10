@@ -78,3 +78,5 @@ open-kbp-modified/openkbp_hn_proton/proton_dose/
 reports/adversarial_ct_examples/
 reports/report1_adversarial/
 *.docx
+
+*.tgz

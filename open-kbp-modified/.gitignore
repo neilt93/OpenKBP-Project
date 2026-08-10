@@ -23,3 +23,4 @@ Thumbs.db
 results/
 *.keras
 *.h5
+*.tgz
