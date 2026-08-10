@@ -1,136 +1,79 @@
-#!/usr/bin/env python3
-"""SmoothAdv (noise-trained) vs baseline certificates, per sigma and radius.
+#!/usr/bin/env python
+"""SmoothAdv vs baseline certified-interval comparison.
 
-Both sides are reduced with IDENTICAL code from `per_patient`, rather than reading
-one side's stored `aggregate` block, so the columns are guaranteed comparable.
-
-DVH interval widths live at per_patient[i]["radii"][R]["dvh_interval_widths_gy"];
-frac-voxels-within-tolerance at per_patient[i]["radii"][R]["frac_within_tol"].
+Both sides are reduced with IDENTICAL code: certify_summary.json aggregates only
+voxel-wise stats, so the DVH-metric numbers (D_95|PTV70, mean|Brainstem) are meaned
+across patients from per_patient[i].radii[R].dvh_interval_widths_gy here.
 """
-import argparse
 import json
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent
-BASELINE_DIR = REPO.parent / "reports" / "certified_robustness" / "experiment_results"
-
-# the DVH metrics the brief singles out
+BASE = Path("/workspace/openkbp/reports/certified_robustness/experiment_results")
+NEW = Path("/workspace/openkbp/open-kbp-modified")
 METRICS = ["D_95|PTV70", "mean|Brainstem"]
 
 
 def load(p):
-    with open(p) as fh:
-        return json.load(fh)
+    with open(p) as f:
+        return json.load(f)
 
 
-def reduce_summary(doc):
-    """-> {radius_float: {"d95": mean, "brainstem": mean, "frac": mean, "n": count}}"""
-    acc = {}
-    for pat in doc.get("per_patient", []):
-        for rkey, rec in pat.get("radii", {}).items():
-            r = float(rkey)
-            slot = acc.setdefault(r, {m: [] for m in METRICS} | {"frac": []})
-            dvh = rec.get("dvh_interval_widths_gy", {})
-            for m in METRICS:
-                if m in dvh:
-                    slot[m].append(dvh[m])
-            if "frac_within_tol" in rec:
-                slot["frac"].append(rec["frac_within_tol"])
+def dvh_means(doc, radius_key):
+    """Mean DVH interval width (Gy) across patients, per metric."""
     out = {}
-    for r, slot in acc.items():
-        mean = lambda xs: (sum(xs) / len(xs)) if xs else float("nan")
-        out[r] = {
-            "d95": mean(slot["D_95|PTV70"]),
-            "brainstem": mean(slot["mean|Brainstem"]),
-            "frac": mean(slot["frac"]),
-            "n": max(len(slot["D_95|PTV70"]), len(slot["frac"])),
-        }
+    for m in METRICS:
+        vals = []
+        for rec in doc["per_patient"]:
+            r = rec["radii"].get(radius_key)
+            if r and m in r.get("dvh_interval_widths_gy", {}):
+                vals.append(r["dvh_interval_widths_gy"][m])
+        out[m] = sum(vals) / len(vals) if vals else None
     return out
 
 
 def fmt(x, nd=4):
-    return "n/a" if x != x else f"{x:.{nd}f}"
+    return "n/a" if x is None else f"{x:.{nd}f}"
 
 
-def delta(new, base, lower_is_better=True):
-    """Signed change plus a plain-language verdict."""
-    if new != new or base != base:
-        return "n/a", ""
-    d = new - base
-    if abs(base) > 1e-12:
-        pct = 100.0 * d / base
-        s = f"{d:+.4f} ({pct:+.1f}%)"
-    else:
-        s = f"{d:+.4f}"
-    good = (d < 0) if lower_is_better else (d > 0)
-    if abs(d) < 1e-9:
-        verdict = "flat"
-    else:
-        verdict = "tighter" if (good and lower_is_better) else \
-                  "higher" if (good and not lower_is_better) else \
-                  "wider" if lower_is_better else "lower"
-    return s, verdict
+def pct(new, base):
+    if new is None or base is None or base == 0:
+        return "n/a"
+    d = (new - base) / base * 100.0
+    return f"{d:+.1f}%"
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--sigmas", default="0.02,0.05,0.10")
-    ap.add_argument("--new-dir", default=".", help="dir holding certify_smoothadv_s<sigma>/")
-    ap.add_argument("--baseline-dir", default=str(BASELINE_DIR))
-    ap.add_argument("--self-test", action="store_true",
-                    help="compare each baseline against itself; every delta must be 0.0000")
-    args = ap.parse_args()
+for sigma in sys.argv[1:] or ["0.02", "0.05", "0.10"]:
+    bpath = BASE / f"certify_s{sigma}_full" / "certify_summary.json"
+    npath = NEW / f"certify_smoothadv_s{sigma}" / "certify_summary.json"
+    if not npath.exists():
+        print(f"\n### sigma={sigma}: SmoothAdv certificate not present yet\n")
+        continue
+    b, n = load(bpath), load(npath)
 
-    any_found = False
-    for S in args.sigmas.split(","):
-        S = S.strip()
-        base_p = Path(args.baseline_dir) / f"certify_s{S}_full" / "certify_summary.json"
-        if args.self_test:
-            new_p = base_p
-        else:
-            new_p = Path(args.new_dir) / f"certify_smoothadv_s{S}" / "certify_summary.json"
+    print(f"\n{'='*100}")
+    print(f"sigma={sigma}   baseline n_pat={b['n_patients']} n_samples={b['n_samples']} "
+          f"alpha={b['alpha']} tol={b['tol_gy']}   |   smoothadv n_pat={n['n_patients']} "
+          f"n_samples={n['n_samples']} alpha={n['alpha']} tol={n['tol_gy']}")
+    print(f"{'='*100}")
 
-        if not base_p.exists():
-            print(f"[sigma={S}] baseline missing: {base_p}", file=sys.stderr)
-            continue
-        if not new_p.exists():
-            print(f"[sigma={S}] SmoothAdv certificate not present yet ({new_p}) — skipping")
-            continue
-        any_found = True
+    keys = [k for k in b["aggregate"] if k in n["aggregate"]]
+    hdr = (f"{'radius':>8} | {'D95 PTV70 width (Gy)':^34} | "
+           f"{'mean Brainstem width (Gy)':^34} | {'frac voxels <=1Gy':^30}")
+    print(hdr)
+    print(f"{'':>8} | {'base':>10} {'smoothadv':>10} {'delta':>10} | "
+          f"{'base':>10} {'smoothadv':>10} {'delta':>10} | {'base':>9} {'smoothadv':>9} {'delta':>9}")
+    print("-" * len(hdr))
 
-        base = reduce_summary(load(base_p))
-        new = reduce_summary(load(new_p))
-
-        bdoc, ndoc = load(base_p), load(new_p)
-        print(f"\n{'='*100}")
-        print(f"sigma = {S}   baseline n_pat={bdoc.get('n_patients')} n_samples={bdoc.get('n_samples')} "
-              f"alpha={bdoc.get('alpha')} | smoothadv n_pat={ndoc.get('n_patients')} "
-              f"n_samples={ndoc.get('n_samples')} alpha={ndoc.get('alpha')}")
-        print(f"{'='*100}")
-        hdr = (f"{'radius':>8} | {'metric':<16} | {'baseline':>10} | {'smoothadv':>10} | "
-               f"{'delta':>20} | verdict")
-        print(hdr); print("-" * len(hdr))
-
-        for r in sorted(set(base) & set(new)):
-            rows = [
-                ("D95 PTV70 (Gy)", base[r]["d95"], new[r]["d95"], True),
-                ("mean Brainstem", base[r]["brainstem"], new[r]["brainstem"], True),
-                ("frac<=1Gy", base[r]["frac"], new[r]["frac"], False),
-            ]
-            for name, b, n, lower_better in rows:
-                d, verdict = delta(n, b, lower_is_better=lower_better)
-                print(f"{r:>8} | {name:<16} | {fmt(b):>10} | {fmt(n):>10} | {d:>20} | {verdict}")
-            print("-" * len(hdr))
-
-        only_base = sorted(set(base) - set(new))
-        only_new = sorted(set(new) - set(base))
-        if only_base or only_new:
-            print(f"  NOTE non-overlapping radii — baseline-only: {only_base}  smoothadv-only: {only_new}")
-
-    if not any_found:
-        print("\nNo SmoothAdv certificates found yet.")
-
-
-if __name__ == "__main__":
-    main()
+    for k in keys:
+        bd, nd_ = dvh_means(b, k), dvh_means(n, k)
+        ba, na = b["aggregate"][k], n["aggregate"][k]
+        cert = "" if ba.get("all_certified") else "  (vacuous)"
+        print(f"{k:>8} | {fmt(bd[METRICS[0]]):>10} {fmt(nd_[METRICS[0]]):>10} "
+              f"{pct(nd_[METRICS[0]], bd[METRICS[0]]):>10} | "
+              f"{fmt(bd[METRICS[1]]):>10} {fmt(nd_[METRICS[1]]):>10} "
+              f"{pct(nd_[METRICS[1]], bd[METRICS[1]]):>10} | "
+              f"{fmt(ba['mean_frac_within_tol'],4):>9} {fmt(na['mean_frac_within_tol'],4):>9} "
+              f"{pct(na['mean_frac_within_tol'], ba['mean_frac_within_tol']):>9}{cert}")
+    print("\nnegative delta on WIDTH = tighter certificate = better")
+    print("positive delta on frac<=1Gy = more voxels certified = better")
