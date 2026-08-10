@@ -66,6 +66,7 @@ def main():
     parser.add_argument('--no-masked-loss', action='store_true', help='Disable masked MAE loss (use unweighted MAE)')
     parser.add_argument('--ptv-weight', type=float, default=2.0, help='Extra weight on PTV voxels (default: 2.0, 0=no weighting)')
     parser.add_argument('--seed', type=int, default=None, help='Random seed for reproducibility (for ensemble training)')
+    parser.add_argument('--out-suffix', type=str, default=None, help='Extra tag appended to the model/results dir name (e.g. smoothadv_s0.05) to avoid collisions when a sweep shares all other flags')
     parser.add_argument('--no-normalize', action='store_true', help='Disable CT/dose normalization (for testing)')
     parser.add_argument('--no-mixed-precision', action='store_true', help='Disable mixed precision (float16) training')
     parser.add_argument('--no-jit', action='store_true', help='Disable XLA JIT compilation')
@@ -110,6 +111,8 @@ def main():
         name_parts.append("NORM")
     if args.seed is not None:
         name_parts.append(f"seed{args.seed}")
+    if args.out_suffix:
+        name_parts.append(args.out_suffix)
     prediction_name = "_".join(name_parts)
 
     print(f"=" * 60)
