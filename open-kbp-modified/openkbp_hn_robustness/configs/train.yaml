@@ -1,0 +1,17 @@
+# Perturbation generation on the TRAINING split (pt_1-200), for adversarial retraining.
+#
+# The existing data_perturbed/ was generated on the VALIDATION patients (pt_201-240) for
+# the robustness study; injecting those into training would leak the test set. This config
+# regenerates the same perturbation families on the TRAINING CTs, written to a separate
+# output dir on the warehouse. (Perturbation levels come from the perturbation classes, not
+# this file, so only paths/patients/seed matter here.)
+seed: 42
+
+paths:
+  validation_data: "provided-data/train-pats"   # SOURCE = training CTs (despite the key name)
+  output_root: "openkbp_hn_robustness"          # local logs (small)
+  data_perturbed: "/Volumes/Neil's SanDisk/OpenKBP-Warehouse/open-kbp-modified/openkbp_hn_robustness/data_perturbed_train"
+
+patients:
+  start: 1
+  end: 200

@@ -1,0 +1,1 @@
+python adversarial_eval.py --model /workspace/results/64filter_100epoch_SE_AUG_MASK_PTV4.0_NORM/models/epoch_100.keras --attack fgsm pgd --epsilons 0,0.01,0.025,0.05,0.1 --output adv_results   

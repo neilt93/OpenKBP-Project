@@ -1,4 +1,7 @@
 import os
+import queue
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional, List
 
@@ -8,6 +11,7 @@ import tensorflow as tf
 from tensorflow.keras.models import load_model
 from tensorflow.keras.optimizers import Adam
 
+from provided_code.augmentation import augment_batch as augment_batch_geometric
 from provided_code.data_loader import DataLoader
 from provided_code.network_architectures import DefineDoseFromCT, InstanceNormalization
 from provided_code.utils import get_paths, sparse_vector_function
@@ -33,19 +37,18 @@ def augment_batch_tf(ct: tf.Tensor, structure_masks: tf.Tensor, dose: tf.Tensor,
     Returns:
         Augmented (ct, structure_masks, dose, possible_dose_mask) tuple
     """
-    # Random left-right flip (axis 3 in BDHWC format)
+    # Verified BDHWC axes: D(axis1)=A-P, H(axis2)=L-R, W(axis3)=S-I. Only the L-R flip
+    # (axis 2) is an anatomically valid augmentation for H&N (left/right symmetry). The
+    # previous version ALSO flipped axis 3 (S-I, i.e. head-to-toe) — an impossible
+    # augmentation that every earlier model trained with; it is removed here. Structure
+    # masks, dose, and the dose mask are flipped together with the CT so the sample stays
+    # self-consistent. (The fuller geometric augmentation is in provided_code.augmentation,
+    # used via aug_params / --aug-*.)
     do_lr_flip = tf.random.uniform([]) < flip_prob
-    ct = tf.cond(do_lr_flip, lambda: tf.reverse(ct, axis=[3]), lambda: ct)
-    structure_masks = tf.cond(do_lr_flip, lambda: tf.reverse(structure_masks, axis=[3]), lambda: structure_masks)
-    dose = tf.cond(do_lr_flip, lambda: tf.reverse(dose, axis=[3]), lambda: dose)
-    possible_dose_mask = tf.cond(do_lr_flip, lambda: tf.reverse(possible_dose_mask, axis=[3]), lambda: possible_dose_mask)
-
-    # Random anterior-posterior flip (axis 2)
-    do_ap_flip = tf.random.uniform([]) < flip_prob
-    ct = tf.cond(do_ap_flip, lambda: tf.reverse(ct, axis=[2]), lambda: ct)
-    structure_masks = tf.cond(do_ap_flip, lambda: tf.reverse(structure_masks, axis=[2]), lambda: structure_masks)
-    dose = tf.cond(do_ap_flip, lambda: tf.reverse(dose, axis=[2]), lambda: dose)
-    possible_dose_mask = tf.cond(do_ap_flip, lambda: tf.reverse(possible_dose_mask, axis=[2]), lambda: possible_dose_mask)
+    ct = tf.cond(do_lr_flip, lambda: tf.reverse(ct, axis=[2]), lambda: ct)
+    structure_masks = tf.cond(do_lr_flip, lambda: tf.reverse(structure_masks, axis=[2]), lambda: structure_masks)
+    dose = tf.cond(do_lr_flip, lambda: tf.reverse(dose, axis=[2]), lambda: dose)
+    possible_dose_mask = tf.cond(do_lr_flip, lambda: tf.reverse(possible_dose_mask, axis=[2]), lambda: possible_dose_mask)
 
     # CT intensity scaling (always apply if intensity_scale > 0, just vary the scale)
     scale = 1.0 + tf.random.uniform([], -intensity_scale, intensity_scale)
@@ -82,55 +85,36 @@ def augment_batch(ct: np.ndarray, structure_masks: np.ndarray, dose: np.ndarray,
     return ct, structure_masks, dose
 
 
-def histogram_percentile(values: tf.Tensor, percentile: float, num_bins: int = 100) -> tf.Tensor:
-    """
-    Fast differentiable percentile using histogram-based approximation.
+def differentiable_percentile(values: tf.Tensor, percentile: float) -> tf.Tensor:
+    """Exact percentile via a hard sort + linear interpolation, differentiable.
 
-    O(n + num_bins) instead of O(n²). Much faster and more stable than soft sorting.
+    `tf.sort` is a permutation-gather, so its gradient flows to the two order
+    statistics that bracket the requested rank — which is exactly the subgradient of
+    a percentile. O(n log n), and no soft-sort O(n²).
+
+    This REPLACES the old soft-histogram estimator, whose softmax-over-CDF crossing
+    was biased toward the middle of the distribution. On a PTV (dose tightly
+    concentrated near prescription) that bias produced wrong percentile targets,
+    which is why the DVH loss fought the MAE and made the score worse. This matches
+    numpy's np.percentile(values, percentile, method="linear").
 
     Args:
-        values: 1D tensor of values (float32)
-        percentile: target percentile (0-100)
-        num_bins: number of histogram bins
+        values: tensor of values (any shape; flattened here). float32.
+        percentile: target percentile in [0, 100].
 
     Returns:
-        Approximate percentile value
+        Scalar percentile value (float32).
     """
-    values = tf.cast(values, tf.float32)
-
-    # Get value range
-    v_min = tf.reduce_min(values)
-    v_max = tf.reduce_max(values)
-    v_range = v_max - v_min + 1e-8
-
-    # Normalize values to [0, 1]
-    values_norm = (values - v_min) / v_range
-
-    # Create soft histogram using sigmoid
-    bin_edges = tf.linspace(0.0, 1.0, num_bins + 1)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-
-    # Soft assignment to bins (differentiable)
-    # Each value contributes to nearby bins with Gaussian weight
-    sigma = 1.0 / num_bins
-    values_expanded = tf.expand_dims(values_norm, 1)  # (n, 1)
-    bin_centers_expanded = tf.expand_dims(bin_centers, 0)  # (1, num_bins)
-    weights = tf.exp(-0.5 * tf.square((values_expanded - bin_centers_expanded) / sigma))
-    hist = tf.reduce_sum(weights, axis=0)  # (num_bins,)
-
-    # Normalize to PDF then CDF
-    hist = hist / (tf.reduce_sum(hist) + 1e-8)
-    cdf = tf.cumsum(hist)
-
-    # Find bin where CDF crosses target percentile
-    target = percentile / 100.0
-    # Soft argmax for the crossing point
-    crossing_weights = tf.nn.softmax(-tf.abs(cdf - target) * 20.0)
-    bin_idx = tf.reduce_sum(crossing_weights * tf.cast(tf.range(num_bins), tf.float32))
-
-    # Interpolate to get value
-    percentile_norm = bin_idx / tf.cast(num_bins, tf.float32)
-    return v_min + percentile_norm * v_range
+    values = tf.reshape(tf.cast(values, tf.float32), [-1])
+    n = tf.shape(values)[0]
+    sorted_v = tf.sort(values)
+    rank = (percentile / 100.0) * tf.cast(n - 1, tf.float32)  # numpy "linear" index
+    lo_i = tf.cast(tf.floor(rank), tf.int32)
+    hi_i = tf.minimum(lo_i + 1, n - 1)
+    frac = rank - tf.floor(rank)
+    v_lo = tf.gather(sorted_v, lo_i)
+    v_hi = tf.gather(sorted_v, hi_i)
+    return v_lo + frac * (v_hi - v_lo)
 
 
 class PredictionModel(DefineDoseFromCT):
@@ -148,6 +132,7 @@ class PredictionModel(DefineDoseFromCT):
         use_jit: bool = True,
         use_masked_loss: bool = True,
         ptv_weight: float = 2.0,
+        aug_params: Optional[dict] = None,
     ) -> None:
         """
         :param data_loader: An object that loads batches of image data
@@ -178,6 +163,11 @@ class PredictionModel(DefineDoseFromCT):
         self.use_dvh_loss = use_dvh_loss
         self.dvh_weight = dvh_weight
         self.use_augmentation = use_augmentation
+        # Geometric / perturbation augmentation strengths (translate/rotate/scale/elastic/
+        # noise). When non-empty, augmentation runs on the numpy batch via
+        # augment_batch_geometric (XLA is off with --no-jit); when empty, the lightweight
+        # tf flip+intensity path (augment_batch_tf) is used, preserving prior behavior.
+        self.aug_params = aug_params or {}
         self.use_masked_loss = use_masked_loss
         self.ptv_weight = ptv_weight
 
@@ -246,37 +236,41 @@ class PredictionModel(DefineDoseFromCT):
 
         percentile_list = [1.0, 5.0, 99.0]  # D_99, D_95, D_1
 
-        # Process first sample in batch only (for speed)
-        y_true_0 = y_true[0, ..., 0]  # (D, H, W)
-        y_pred_0 = y_pred[0, ..., 0]
-        masks_0 = structure_masks[0]
+        # Average the DVH loss over EVERY sample in the batch. The old version scored
+        # only sample 0, discarding 3/4 of a batch-4 signal and making the gradient
+        # needlessly noisy.
+        batch_size = y_true.shape[0]
+        if batch_size is None:
+            # The batch dim must be static so the Python loop below averages over EVERY
+            # sample. The numpy loader traces with a concrete shape; a None here means a
+            # tf.data / symbolic-batch refactor silently broke that guarantee, which would
+            # quietly drop the DVH loss back to scoring only sample 0. Fail loud instead.
+            raise ValueError(
+                "DVH loss requires a static batch dimension, got y_true.shape[0]=None. "
+                "Feed concrete-shaped batches (the numpy DataLoader does).")
 
-        def compute_roi_percentile_loss(roi_idx, percentile):
-            """Compute single percentile loss for one ROI."""
-            roi_mask = masks_0[..., roi_idx]
+        def roi_percentile_loss(true_vol, pred_vol, roi_mask, percentile):
             mask_bool = roi_mask > 0.5
             mask_count = tf.reduce_sum(tf.cast(mask_bool, tf.float32))
 
             def compute_loss():
-                true_dose_roi = tf.boolean_mask(y_true_0, mask_bool)
-                pred_dose_roi = tf.boolean_mask(y_pred_0, mask_bool)
-                true_p = histogram_percentile(true_dose_roi, percentile)
-                pred_p = histogram_percentile(pred_dose_roi, percentile)
+                true_p = differentiable_percentile(tf.boolean_mask(true_vol, mask_bool), percentile)
+                pred_p = differentiable_percentile(tf.boolean_mask(pred_vol, mask_bool), percentile)
                 return tf.abs(true_p - pred_p)
 
-            # Use tf.cond instead of Python if
-            return tf.cond(
-                mask_count >= 10.0,
-                compute_loss,
-                lambda: tf.constant(0.0, dtype=tf.float32)
-            )
+            # tf.cond so an absent/tiny ROI contributes 0 without breaking the graph.
+            return tf.cond(mask_count >= 10.0, compute_loss,
+                           lambda: tf.constant(0.0, dtype=tf.float32))
 
-        # Compute all losses (static unrolling for small loops is OK)
         all_losses = []
-        for roi_idx in target_indices:
-            for percentile in percentile_list:
-                loss = compute_roi_percentile_loss(roi_idx, percentile)
-                all_losses.append(loss)
+        for b in range(batch_size):
+            true_vol = y_true[b, ..., 0]  # (D, H, W)
+            pred_vol = y_pred[b, ..., 0]
+            masks_b = structure_masks[b]
+            for roi_idx in target_indices:
+                roi_mask = masks_b[..., roi_idx]
+                for percentile in percentile_list:
+                    all_losses.append(roi_percentile_loss(true_vol, pred_vol, roi_mask, percentile))
 
         # Stack and compute mean of non-zero losses
         stacked = tf.stack(all_losses)
@@ -359,6 +353,50 @@ class PredictionModel(DefineDoseFromCT):
             'dvh': float(dvh_loss)
         }
 
+    def _iter_augmented_batches(self):
+        """Yield geometrically-augmented numpy batches (ct, sm, dose, pdm), produced
+        CONCURRENTLY ahead of the GPU consumer to keep the GPU fed.
+
+        Geometric augmentation is the training bottleneck: per sample it resamples 13
+        channels with scipy.map_coordinates plus elastic gaussian_filters on 128^3. Those
+        are C extensions that release the GIL, so running several BATCH augmentations at
+        once (a pool of `depth` tasks, each fanning batch_size per-sample tasks out to
+        augmentation._POOL) keeps ~depth*batch_size cores busy while the main thread runs
+        the GPU step — overlapping CPU augmentation with GPU compute. Without this, batches
+        augment sequentially (~4 cores) and the GPU idles ~95% of the epoch.
+
+        Tunables (env): AUG_PREFETCH_DEPTH (concurrent batch-augmentations / queue depth),
+        AUG_POOL_WORKERS (per-sample pool width, see augmentation._POOL).
+        """
+        depth = int(os.environ.get("AUG_PREFETCH_DEPTH", 16))
+        raw_batches = self.data_loader.get_batches()
+        executor = ThreadPoolExecutor(max_workers=depth)
+        pending: "queue.Queue" = queue.Queue(maxsize=depth)
+        sentinel = object()
+
+        def _augment(batch):
+            return augment_batch_geometric(
+                batch.ct, batch.structure_masks, batch.dose, batch.possible_dose_mask,
+                None, **self.aug_params,
+            )
+
+        def _producer():
+            try:
+                for batch in raw_batches:
+                    pending.put(executor.submit(_augment, batch))  # blocks when `depth` ahead
+            finally:
+                pending.put(sentinel)
+
+        threading.Thread(target=_producer, daemon=True).start()
+        try:
+            while True:
+                item = pending.get()
+                if item is sentinel:
+                    break
+                yield item.result()
+        finally:
+            executor.shutdown(wait=False)
+
     def train_model(self, epochs: int = 200, save_frequency: int = 5, keep_model_history: int = 2) -> None:
         """
         :param epochs: the number of epochs the model will be trained over
@@ -379,15 +417,28 @@ class PredictionModel(DefineDoseFromCT):
 
             epoch_metrics = {'loss': [], 'mae': [], 'dvh': []}
 
-            for idx, batch in enumerate(self.data_loader.get_batches()):
-                # Get batch data and convert to tensors (convert_to_tensor allows overlap)
-                ct = tf.convert_to_tensor(batch.ct, dtype=tf.float32)
-                structure_masks = tf.convert_to_tensor(batch.structure_masks, dtype=tf.float32)
-                dose = tf.convert_to_tensor(batch.dose, dtype=tf.float32)
-                possible_dose_mask = tf.convert_to_tensor(batch.possible_dose_mask, dtype=tf.float32)
+            # When geometric augmentation is active it is the bottleneck, so produce the
+            # augmented numpy batches CONCURRENTLY ahead of the GPU (see
+            # _iter_augmented_batches); otherwise iterate the raw batches directly.
+            geometric_aug = self.use_augmentation and bool(self.aug_params)
+            batch_source = self._iter_augmented_batches() if geometric_aug else self.data_loader.get_batches()
 
-                # Apply TF augmentation if enabled (XLA-compatible)
-                if self.use_augmentation:
+            for batch in batch_source:
+                if geometric_aug:
+                    bct, bsm, bdose, bpdm = batch  # already augmented (translate/rotate/scale/elastic/noise)
+                else:
+                    bct, bsm = batch.ct, batch.structure_masks
+                    bdose, bpdm = batch.dose, batch.possible_dose_mask
+
+                # Convert to tensors (convert_to_tensor allows overlap)
+                ct = tf.convert_to_tensor(bct, dtype=tf.float32)
+                structure_masks = tf.convert_to_tensor(bsm, dtype=tf.float32)
+                dose = tf.convert_to_tensor(bdose, dtype=tf.float32)
+                possible_dose_mask = tf.convert_to_tensor(bpdm, dtype=tf.float32)
+
+                # Lightweight tf flip+intensity path when no geometric params given
+                # (preserves prior --use-aug behavior, XLA-compatible).
+                if self.use_augmentation and not self.aug_params:
                     ct, structure_masks, dose, possible_dose_mask = augment_batch_tf(
                         ct, structure_masks, dose, possible_dose_mask
                     )

@@ -20,6 +20,20 @@ class DataLoader:
     CT_MAX = 4095.0    # 12-bit max value per official docs
     DOSE_PRESCRIPTION = 70.0  # Prescription dose in Gy for normalization
 
+    # Compact cache dtypes (the cache stacks EVERY patient in RAM). The default float64
+    # is ~218 MB/patient (structure_masks alone is 128^3 x 10 x 8 bytes = 33.6 GB for 200
+    # patients) — uncacheable once perturbed-set injection multiplies the patient count.
+    # Binary masks -> uint8, normalized ct/dose -> float32: ~5x less RAM (~40 MB/patient),
+    # so ~1000 patients fits a 64 GB box. Storage-only: everything is cast to float32 at
+    # batch time (tf.convert_to_tensor / augmentation), so it's numerically harmless.
+    CACHE_DTYPES = {
+        "structure_masks": np.uint8,
+        "possible_dose_mask": np.uint8,
+        "ct": np.float32,
+        "dose": np.float32,
+        "predicted_dose": np.float32,
+    }
+
     def __init__(self, patient_paths: List[Path], batch_size: int = 2, cache_data: bool = True, normalize: bool = True, precomputed_path: Optional[Path] = None):
         """
         :param patient_paths: list of the paths where data for each patient is stored
@@ -98,14 +112,42 @@ class DataLoader:
             Warning("Batch size has been changed to 1 for dose prediction mode")
 
     def _load_from_precomputed(self) -> None:
-        """Load pre-stacked data from .npz file for instant startup."""
+        """Load pre-stacked data from .npz file for instant startup.
+
+        The stacked arrays are in the row order the NPZ was SAVED with. Building the
+        patient->row index from the current `patient_paths` order is only correct if the
+        two orders match; otherwise a request for pt_X silently returns pt_Y's data (a
+        correctness and potential train/val-leakage bug). If the NPZ carries a
+        `patient_ids` array we map each current patient to its true saved row and raise on
+        any mismatch; if it does not, we cannot verify the order, so we fail loud rather
+        than trust it.
+        """
         print(f"Loading precomputed data from {self.precomputed_path}...")
-        data = np.load(self.precomputed_path)
+        data = np.load(self.precomputed_path, allow_pickle=True)
         for key in data.files:
+            if key == "patient_ids":
+                continue
             self._stacked_data[key] = data[key]
-        # Build patient index from patient_paths order
-        for idx, patient_path in enumerate(self.patient_paths):
-            self._patient_to_idx[patient_path.stem] = idx
+
+        current_ids = [p.stem for p in self.patient_paths]
+        if "patient_ids" in data.files:
+            saved_ids = [str(x) for x in data["patient_ids"]]
+            saved_pos = {pid: i for i, pid in enumerate(saved_ids)}
+            missing = [pid for pid in current_ids if pid not in saved_pos]
+            if missing:
+                raise ValueError(
+                    f"Precomputed NPZ {self.precomputed_path} is missing {len(missing)} "
+                    f"requested patients (e.g. {missing[:3]}); it was built for a different "
+                    "patient set. Rebuild it for these paths.")
+            # Map each current patient to its ACTUAL saved row (not positional order).
+            for patient_path in self.patient_paths:
+                self._patient_to_idx[patient_path.stem] = saved_pos[patient_path.stem]
+        else:
+            raise ValueError(
+                f"Precomputed NPZ {self.precomputed_path} has no `patient_ids` array, so its "
+                "row order cannot be verified against the requested patients — refusing to "
+                "load it silently (this could return the wrong patient's data or leak the "
+                "validation split). Rebuild the NPZ with a `patient_ids` array.")
         print(f"Loaded precomputed data. Shape per key: {[(k, v.shape) for k, v in self._stacked_data.items()]}")
 
     def _preload_and_shape_all_data(self) -> None:
@@ -212,5 +254,12 @@ class DataLoader:
             elif key in ("dose", "predicted_dose"):
                 # Dose normalization: divide by prescription dose (70 Gy)
                 shaped_data = shaped_data / self.DOSE_PRESCRIPTION
+
+        # Downcast to the compact cache dtype (storage-only; cast back to float32 at batch
+        # time). Skips voxel_dimensions (tiny, keep full precision). NB: masks/pdm become
+        # uint8 only because they are binary {0,1}; do not store non-binary data this way.
+        cache_dtype = self.CACHE_DTYPES.get(key)
+        if cache_dtype is not None and shaped_data.dtype != cache_dtype:
+            shaped_data = shaped_data.astype(cache_dtype)
 
         return shaped_data
