@@ -113,7 +113,34 @@ for S in 0.02 0.05 0.10; do
   certify "$CTRL" "$S" "$(radii_for $S)" 100 - "certify_control_s$S"
 done
 
-# --- 3-4. n=500 tightening at sigma=0.02 on 10 pts (larger radius grid) ---
+# --- 3. SEED REPLICATE at sigma=0.05: the missing noise floor -----------------
+# Every arm is a single training run, so we currently cannot say whether a -12%
+# D95 shift is the method or just run-to-run variance. A second independently
+# trained sigma=0.05 model, identical config, differing only in seed, measures
+# that variance directly: the gap between the two IS the noise floor that every
+# other delta has to clear. Placed before the n=500 steps deliberately -- it
+# removes a confound, whereas n=500 only extends the radius grid, so if the pod
+# dies early this is the one worth having.
+SEED_SUFFIX=smoothadv_s0.05_seed1
+if find_model "$SEED_SUFFIX" >/dev/null 2>&1; then
+  banner "seed replicate already present, skipping training"
+else
+  banner "TRAIN seed replicate (sigma=0.05, --seed 1)"
+  python runpod_train.py --filters 64 --epochs 100 --use-se --use-aug --batch-size 4 \
+      --ptv-weight 4.0 --no-jit --aug-noise 0.05 --seed 1 --data-dir "$TRAINDATA" \
+      --out-suffix "$SEED_SUFFIX" > train_seed1.log 2>&1
+  if [ $? -ne 0 ]; then fail "seed-replicate training crashed (see train_seed1.log)"; fi
+fi
+
+SEEDM=$(find_model "$SEED_SUFFIX")
+if [ -n "$SEEDM" ]; then
+  banner "seed replicate = $SEEDM"
+  certify "$SEEDM" 0.05 "$(radii_for 0.05)" 100 - "certify_seed1_s0.05"
+else
+  fail "no seed-replicate model after training -- noise floor unmeasured"
+fi
+
+# --- 4-5. n=500 tightening at sigma=0.02 on 10 pts (larger radius grid) ---
 N500_RADII="0.01,0.02,0.028,0.043"   # up to 2.17*sigma at n=500
 SADV=$(find_model "smoothadv_s0.02")
 if [ -n "$SADV" ]; then
@@ -126,7 +153,8 @@ certify "$CTRL" 0.02 "$N500_RADII" 500 10 "certify_n500_s0.02_control"
 # --- summary ---
 banner "QUEUE COMPLETE"
 echo "certificates produced:"
-ls -la certify_control_s*/certify_summary.json certify_n500_s0.02_*/certify_summary.json 2>&1
+ls -la certify_control_s*/certify_summary.json certify_seed1_s0.05/certify_summary.json \
+       certify_n500_s0.02_*/certify_summary.json 2>&1
 if [ "$failed" -ne 0 ]; then
   echo "!!! QUEUE FINISHED WITH FAILURES -- inspect the *.log files above."
   exit 1
