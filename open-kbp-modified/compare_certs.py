@@ -9,9 +9,20 @@ import json
 import sys
 from pathlib import Path
 
-BASE = Path("/workspace/openkbp/reports/certified_robustness/experiment_results")
-NEW = Path("/workspace/openkbp/open-kbp-modified")
+REPO = Path(__file__).resolve().parent
+BASE = REPO.parent / "reports" / "certified_robustness" / "experiment_results"
+# A certificate is read from the live run directory if present, else from the
+# committed copy under reports/ -- sigma=0.02 only exists in the latter.
+NEW_DIRS = [REPO, BASE]
 METRICS = ["D_95|PTV70", "mean|Brainstem"]
+
+
+def find_new(sigma):
+    for d in NEW_DIRS:
+        p = d / f"certify_smoothadv_s{sigma}" / "certify_summary.json"
+        if p.exists():
+            return p
+    return None
 
 
 def load(p):
@@ -45,8 +56,8 @@ def pct(new, base):
 
 for sigma in sys.argv[1:] or ["0.02", "0.05", "0.10"]:
     bpath = BASE / f"certify_s{sigma}_full" / "certify_summary.json"
-    npath = NEW / f"certify_smoothadv_s{sigma}" / "certify_summary.json"
-    if not npath.exists():
+    npath = find_new(sigma)
+    if npath is None:
         print(f"\n### sigma={sigma}: SmoothAdv certificate not present yet\n")
         continue
     b, n = load(bpath), load(npath)

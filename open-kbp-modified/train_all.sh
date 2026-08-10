@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Detached SmoothAdv training driver: 3 noise-augmented models, one per sigma.
 # Launched with setsid+nohup so it survives Claude Code session teardown.
+#
+# SIGMAS is overridable so an interrupted run can retrain only what is missing:
+#   SIGMAS="0.05 0.10" ./train_all.sh
 cd /workspace/openkbp/open-kbp-modified || exit 1
 export TRAINDATA=/tmp/okbp-data/provided-data
+SIGMAS="${SIGMAS:-0.02 0.05 0.10}"
 
-for S in 0.02 0.05 0.10; do
+for S in $SIGMAS; do
   echo "=== START sigma=$S $(date -u +%H:%M:%S) ==="
   python runpod_train.py --filters 64 --epochs 100 --use-se --use-aug --batch-size 4 \
       --ptv-weight 4.0 --no-jit --aug-noise "$S" --data-dir "$TRAINDATA" \

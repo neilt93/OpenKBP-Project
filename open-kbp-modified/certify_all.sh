@@ -16,7 +16,8 @@
 # identical values in identical order. We try large first and fall back on OOM.
 cd /workspace/openkbp/open-kbp-modified || exit 1
 DATA=/tmp/okbp-data/provided-data/validation-pats
-SIGMAS="0.02 0.05 0.10"
+SIGMAS="${SIGMAS:-0.02 0.05 0.10}"
+n_want=$(echo $SIGMAS | wc -w)
 failed=0
 
 # wait for training to finish (match the script invocation, not any stray string)
@@ -52,7 +53,9 @@ for S in $SIGMAS; do
   echo "=== CERTIFY sigma=$S model=$M radii=$R $(date -u +%H:%M:%S) ==="
 
   ok=0
-  for BD in 32 16 8; do
+  # 32 is known to OOM on the 4090 (24 GB); 16 runs at ~61 s/patient. Start at 16
+  # rather than burning a guaranteed-failed attempt per sigma.
+  for BD in 16 8; do
     echo "--- attempting --batch-draws $BD ---"
     python certify_smoothing.py --model "$M" --data-dir "$DATA" --sigma "$S" \
         --n-samples 100 --batch-draws "$BD" --radii "$R" --tol-gy 1.0 --alpha 0.001 \
@@ -75,12 +78,17 @@ for S in $SIGMAS; do
 done
 
 echo "=== CERTIFICATION PASS COMPLETE $(date -u +%H:%M:%S) ==="
-n=$(ls certify_smoothadv_s*/certify_summary.json 2>/dev/null | wc -l)
-echo "certificates produced: $n / 3"
+# count only the sigmas THIS run asked for -- a stale directory from an earlier
+# run must not be able to make an incomplete pass look complete.
+n=0
+for S in $SIGMAS; do
+  [ -f "certify_smoothadv_s$S/certify_summary.json" ] && n=$((n + 1))
+done
+echo "certificates produced: $n / $n_want"
 ls -la certify_smoothadv_s*/certify_summary.json 2>&1
 
-if [ "$failed" -ne 0 ] || [ "$n" -lt 3 ]; then
-  echo "!!! CERTIFICATION INCOMPLETE -- $n/3 produced. DO NOT treat this run as a result."
+if [ "$failed" -ne 0 ] || [ "$n" -lt "$n_want" ]; then
+  echo "!!! CERTIFICATION INCOMPLETE -- $n/$n_want produced. DO NOT treat this run as a result."
   exit 1
 fi
-echo "=== ALL CERTIFICATION DONE (3/3) ==="
+echo "=== ALL CERTIFICATION DONE ($n/$n_want) ==="
