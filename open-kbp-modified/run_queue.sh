@@ -36,6 +36,16 @@ failed=0
 banner()  { echo; echo "=== $* $(date -u +%H:%M:%S) ==="; }
 fail()    { echo "!!! FAILURE: $*"; failed=1; }
 
+# /workspace is a MooseFS share with a ~20 GB QUOTA -- `df` reports the whole
+# cluster (1.2 PB free) and is useless here. Exceeding it truncates the file
+# being written and kills the writer (EDQUOT), which is what ended the 00:45 run
+# mid-checkpoint. runpod_train.py writes a 1.79 GB checkpoint every 10 epochs and
+# keeps the last 5, so ONE training run can add ~9 GB. Prune before each train.
+prune_ckpts() {
+  find /workspace/results -name "epoch_*.keras" ! -name "epoch_100.keras" -delete 2>/dev/null
+  echo "--- pruned intermediate checkpoints; /workspace/results now $(du -sh /workspace/results 2>/dev/null | cut -f1) ---"
+}
+
 radii_for() {
   case "$1" in
     0.02) echo "0.01,0.02,0.028,0.5,1.0,2.0" ;;
@@ -56,6 +66,14 @@ find_model() {  # find_model <substring> ; echoes first epoch_100.keras match
 certify() {  # certify <model> <sigma> <radii> <n_samples> <n_patients|-> <outdir>
   local M="$1" S="$2" R="$3" N="$4" NP="$5" OUT="$6" np_arg=""
   [ "$NP" != "-" ] && np_arg="--n-patients $NP"
+  # RESUMABLE: never recompute a finished certificate. The seed-replicate
+  # training was killed mid-checkpoint-write at 00:45 (EDQUOT -- /workspace hit
+  # its ~20 GB quota) and took the queue down with it. Without this guard a
+  # restart would redo ~105 min of control certification that already succeeded.
+  if [ -f "$OUT/certify_summary.json" ]; then
+    banner "SKIP $OUT (certificate already present)"
+    return 0
+  fi
   local ok=0
   # 32 OOMs on the 4090 (24 GB); 16 runs at ~52 s/patient. Starting at 32 would
   # burn a guaranteed-failed attempt on each of the 5 certify calls below.
@@ -125,6 +143,7 @@ SEED_SUFFIX=smoothadv_s0.05_seed1
 if find_model "$SEED_SUFFIX" >/dev/null 2>&1; then
   banner "seed replicate already present, skipping training"
 else
+  prune_ckpts
   banner "TRAIN seed replicate (sigma=0.05, --seed 1)"
   python runpod_train.py --filters 64 --epochs 100 --use-se --use-aug --batch-size 4 \
       --ptv-weight 4.0 --no-jit --aug-noise 0.05 --seed 1 --data-dir "$TRAINDATA" \
