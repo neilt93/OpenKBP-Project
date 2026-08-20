@@ -115,6 +115,29 @@ def certified_ranks(n: int, radius: float, sigma: float, p: float = 0.5,
     return j, k, p_lo, p_hi
 
 
+def max_certifiable_radius(n: int, sigma: float, alpha: float = 0.001, p: float = 0.5) -> float:
+    """Largest L2 radius at which a two-sided median certificate still exists for `n`
+    samples at confidence 1-alpha. Beyond it the order-statistic ranks fall off the
+    sample (j==0 / k==n+1), so the certificate is VACUOUS and requesting larger radii
+    just burns compute for no guarantee.
+
+    For the median (p=0.5): a lower rank exists iff (1 - p_lo)^n <= alpha/2, with
+    p_lo = Phi(-R/sigma); solving gives R/sigma <= Phi^{-1}((alpha/2)^{1/n}). The upper
+    side is symmetric, so this ratio bounds both. (alpha=0.001, n=100 -> 1.45 sigma;
+    n=500 -> 2.17 sigma.) For p != 0.5 the two sides differ; we return the tighter
+    (min) so the reported radius is always certifiable on both ends.
+    """
+    if sigma <= 0 or n < 1:
+        return 0.0
+    q = (alpha / 2.0) ** (1.0 / n)
+    z = norm.ppf(p)
+    # lower-side ceiling: Phi(z - R/sigma) >= 1 - q  ->  R/sigma <= z - Phi^{-1}(1 - q)
+    lo_ratio = z - norm.ppf(1.0 - q)
+    # upper-side ceiling: Phi(z + R/sigma) <= q      ->  R/sigma <= Phi^{-1}(q) - z
+    hi_ratio = norm.ppf(q) - z
+    return max(0.0, sigma * min(lo_ratio, hi_ratio))
+
+
 @dataclass
 class VoxelCertificate:
     """Per-voxel certified dose interval (in whatever units `samples` were in)."""
@@ -148,14 +171,21 @@ def certify_from_samples(samples: NDArray, radius: float, sigma: float,
     n = samples.shape[0]
     j, k, p_lo, p_hi = certified_ranks(n, radius, sigma, p, alpha)
 
-    ordered = np.sort(samples, axis=0)            # ascending along the sample axis
     median = np.median(samples, axis=0)
 
     certified_low = j >= 1
     certified_high = k <= n
-    # 1-indexed rank -> 0-indexed row; clamp to the data range when uncertified.
-    lower = ordered[j - 1] if certified_low else ordered[0]
-    upper = ordered[k - 1] if certified_high else ordered[-1]
+    # We need only two order statistics (the lower and upper rank rows), not a full sort.
+    # np.partition places the requested kth-smallest rows into their sorted positions in
+    # O(n) per voxel vs O(n log n) for np.sort -- the values it returns at those indices are
+    # identical to np.sort's. 1-indexed rank -> 0-indexed row; clamp to the data range when
+    # uncertified.
+    lo_idx = (j - 1) if certified_low else 0
+    hi_idx = (k - 1) if certified_high else (n - 1)
+    kths = sorted({lo_idx, hi_idx})
+    ordered = np.partition(samples, kths, axis=0)
+    lower = ordered[lo_idx]
+    upper = ordered[hi_idx]
     return VoxelCertificate(lower=lower, upper=upper, median=median,
                             j=j, k=k, p_lo=p_lo, p_hi=p_hi,
                             certified_low=certified_low, certified_high=certified_high)

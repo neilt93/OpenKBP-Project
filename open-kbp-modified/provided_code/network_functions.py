@@ -411,6 +411,17 @@ class PredictionModel(DefineDoseFromCT):
             return
         self.data_loader.set_mode("training_model")
 
+        # Announce the resolved augmentation pipeline ONCE, from the same fields that select it at
+        # the batch loop below, so every train_*.log records which regime ran. A silent pipeline
+        # switch (numpy vs tf) between a noise arm and its control was the confound behind the
+        # SmoothAdv artifact; this makes such a mismatch impossible to miss in the logs.
+        if self.use_augmentation and self.aug_params:
+            print(f"=== AUG PATH: numpy-geometric (aug_params={self.aug_params}) ===", flush=True)
+        elif self.use_augmentation:
+            print("=== AUG PATH: tf-lightweight (LR-flip + intensity; no geometric/noise aug) ===", flush=True)
+        else:
+            print("=== AUG PATH: none (augmentation disabled) ===", flush=True)
+
         for epoch in range(self.current_epoch, epochs):
             self.current_epoch = epoch
             self.data_loader.shuffle_data()

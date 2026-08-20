@@ -54,6 +54,7 @@ from provided_code import DataLoader, DoseEvaluator, get_paths
 from provided_code.network_architectures import InstanceNormalization
 from provided_code.smoothing_certify import (
     certify_from_samples,
+    max_certifiable_radius,
     per_voxel_rms_equivalent,
 )
 
@@ -193,6 +194,11 @@ def main():
     p.add_argument("--n-samples", type=int, default=100, help="Monte-Carlo noisy-CT draws per patient")
     p.add_argument("--batch-draws", type=int, default=8, help="Noisy CTs per forward pass")
     p.add_argument("--radii", default="0.5,1.0,2.0", help="Comma-separated L2 certified radii")
+    p.add_argument("--allow-vacuous-radii", action="store_true",
+                   help="Keep radii above the n-sample certifiable ceiling (R_max = sigma * "
+                        "Phi^-1((alpha/2)^(1/n))). By default they are DROPPED with a warning -- "
+                        "the default 0.5/1.0/2.0 grid is vacuous at every sane sigma, which "
+                        "produced whole certificate sets with all_certified=false.")
     p.add_argument("--tol-gy", type=float, default=1.0, help="Clinical tolerance for 'certified within' fraction")
     p.add_argument("--alpha", type=float, default=0.001, help="1 - confidence of the certificate")
     p.add_argument("--n-patients", type=int, default=None, help="Subset for a fast first pass")
@@ -202,6 +208,25 @@ def main():
     args = p.parse_args()
 
     radii = [float(r) for r in args.radii.split(",")]
+    # Drop radii above the n-sample certifiable ceiling -- beyond R_max the order-statistic
+    # ranks fall off the sample and every voxel is uncertified (all_certified=false), so those
+    # radii add compute and misleading rows for no guarantee. The default 0.5/1.0/2.0 grid is
+    # vacuous at every realistic sigma; this stops a vacuous grid being certified again.
+    r_max = max_certifiable_radius(args.n_samples, args.sigma, args.alpha)
+    vacuous = [r for r in radii if r > r_max]
+    if vacuous:
+        msg = (f"radii {vacuous} exceed R_max={r_max:.4f} "
+               f"(= sigma {args.sigma} * Phi^-1((alpha/2)^(1/n)) at n={args.n_samples}) "
+               f"-- certificate is vacuous there.")
+        if args.allow_vacuous_radii:
+            print(f"WARNING: {msg} Kept because --allow-vacuous-radii.")
+        else:
+            radii = [r for r in radii if r <= r_max]
+            print(f"WARNING: {msg} DROPPED (pass --allow-vacuous-radii to keep).")
+            if not radii:
+                print(f"ERROR: no certifiable radii remain (all > R_max={r_max:.4f}). "
+                      f"Choose radii <= {r_max:.4f} or raise --n-samples.")
+                return 1
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
 

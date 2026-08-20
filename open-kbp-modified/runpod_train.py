@@ -55,6 +55,17 @@ def main():
     parser.add_argument('--aug-scale', type=float, default=0.0, help='Max in-plane scale delta (e.g. 0.1 = +/-10%%)')
     parser.add_argument('--aug-elastic', type=float, default=0.0, help='Elastic deformation strength in voxels (e.g. 3)')
     parser.add_argument('--aug-noise', type=float, default=0.0, help='CT Gaussian noise std, normalized units (e.g. 0.02)')
+    # Which augmentation pipeline runs. HISTORICALLY this was decided IMPLICITLY by whether any
+    # geometric/noise arg was nonzero (--aug-noise 0 silently fell back to the tf path), which
+    # made a noise arm and its "control" run DIFFERENT augmentation regimes -- the confound that
+    # faked the SmoothAdv result. Now the path is explicit. 'auto' preserves the old inference
+    # (numpy iff a geometric/noise arg is set, else tf) for back-compat; 'tf'/'numpy' force it, so
+    # `--aug-path numpy --aug-noise 0` is a clean zero-noise numpy control (no 1e-9 hack needed).
+    parser.add_argument('--aug-path', choices=['auto', 'tf', 'numpy'], default='auto',
+                        help="Augmentation pipeline: 'tf' (lightweight LR-flip+intensity), 'numpy' "
+                             "(geometric: flips+translate/rotate/scale/elastic+noise), or 'auto' "
+                             "(numpy iff any --aug-* arg set, else tf). Decouples the pipeline from "
+                             "--aug-noise so a noise arm and its control share one regime.")
     # Inject pre-generated perturbed-CT sets into the training group (robustness retraining)
     parser.add_argument('--inject-perturbed', type=str, default=None, help='Root of pre-generated perturbed-CT sets to inject')
     parser.add_argument('--inject-glob', type=str, default='*/*/{pid}/ct.csv', help='Glob for perturbed CTs under --inject-perturbed ({pid}=patient id)')
@@ -92,9 +103,18 @@ def main():
         name_parts.append(f"DVH{args.dvh_weight}")
     if args.use_aug:
         name_parts.append("AUG")
-    # Geometric augmentation strengths -> numpy augmentation path
+    # Resolve the augmentation pipeline EXPLICITLY (see --aug-path). 'auto' reproduces the old
+    # implicit rule; 'tf'/'numpy' force it. The resolved value -- not `bool(aug_params)` -- is the
+    # single source of truth handed to the trainer, so --aug-noise can never switch pipelines.
+    geo_requested = any([args.aug_translate, args.aug_rotate, args.aug_scale, args.aug_elastic, args.aug_noise])
+    if args.aug_path == 'auto':
+        resolved_aug_path = 'numpy' if geo_requested else 'tf'
+    else:
+        resolved_aug_path = args.aug_path
+    # aug_params is non-empty IFF the numpy path is active. On the numpy path we always build it
+    # (even at zero noise) so `--aug-path numpy --aug-noise 0` is a clean matched control.
     aug_params = {}
-    if any([args.aug_translate, args.aug_rotate, args.aug_scale, args.aug_elastic, args.aug_noise]):
+    if resolved_aug_path == 'numpy':
         aug_params = dict(
             translate_frac=args.aug_translate,
             rotate_deg=args.aug_rotate,
@@ -103,6 +123,15 @@ def main():
             noise_std=args.aug_noise,
         )
         name_parts.append("AUGGEO")
+    elif args.use_aug:
+        # tf-lightweight path is active and augmentation is on -- label it so a control-vs-arm
+        # pipeline mismatch is visible from the directory name alone.
+        name_parts.append("AUGTF")
+    # The tf path has no noise/geometric support; warn LOUDLY rather than silently drop the arg.
+    if resolved_aug_path == 'tf' and geo_requested:
+        print(f"WARNING: --aug-path tf ignores geometric/noise args "
+              f"(aug_noise={args.aug_noise}, translate={args.aug_translate}, rotate={args.aug_rotate}, "
+              f"scale={args.aug_scale}, elastic={args.aug_elastic}). Use --aug-path numpy to apply them.")
     if args.inject_perturbed:
         name_parts.append("INJ")
     if not args.no_masked_loss:
@@ -199,12 +228,14 @@ def main():
             features.append("SE blocks")
         if args.use_dvh:
             features.append(f"DVH loss (weight={args.dvh_weight})")
-        if args.use_aug:
-            features.append("augmentation")
+        if args.use_aug or aug_params:
+            features.append(f"augmentation [{resolved_aug_path} path]")
         if not args.no_masked_loss:
             features.append(f"masked loss (PTV weight={args.ptv_weight})")
         feature_str = f" with {', '.join(features)}" if features else ""
         print(f"\nStarting training: {num_filters} filters, {num_epochs} epochs{feature_str}")
+        print(f"AUG PATH (resolved): {resolved_aug_path}"
+              + (f" | aug_params={aug_params}" if aug_params else " | tf flip+intensity"))
 
         precomputed_path = Path(args.precomputed) if args.precomputed else None
         data_loader_train = DataLoader(training_plan_paths, batch_size=args.batch_size, normalize=not args.no_normalize, cache_data=not args.no_cache, precomputed_path=precomputed_path)

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Detached certification driver. Waits for train_all.sh to finish, then re-certifies
-# each noise-trained model at its matching sigma, on the SAME radii grid as the
-# committed baseline certs (the brief omits --radii, which would default to the
-# vacuous 0.5/1/2 and give zero overlap with the informative baseline points).
+# each noise-trained model at its matching sigma, on the informative radii grid
+# (0.5x/1.0x/1.4x sigma). We pass --radii explicitly because certify_smoothing.py's
+# default (0.5/1/2) is vacuous at every sane sigma. Those vacuous points are no longer
+# appended here -- certify_smoothing.py now drops any radius above R_max anyway.
 #
 # MODEL PATH: runpod_train.py writes to the ABSOLUTE path /workspace/results when
 # /workspace exists (RunPod special-case, runpod_train.py:147) -- NOT ./results as
@@ -26,9 +27,9 @@ echo "=== training finished, starting certification $(date -u +%H:%M:%S) ==="
 
 radii_for() {
   case "$1" in
-    0.02) echo "0.01,0.02,0.028,0.5,1.0,2.0" ;;
-    0.05) echo "0.025,0.05,0.07,0.5,1.0,2.0" ;;
-    0.10) echo "0.05,0.1,0.14,0.5,1.0,2.0" ;;
+    0.02) echo "0.01,0.02,0.028" ;;
+    0.05) echo "0.025,0.05,0.07" ;;
+    0.10) echo "0.05,0.1,0.14" ;;
   esac
 }
 

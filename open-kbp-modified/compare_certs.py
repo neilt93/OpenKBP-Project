@@ -1,9 +1,21 @@
 #!/usr/bin/env python
 """SmoothAdv vs baseline certified-interval comparison.
 
-Both sides are reduced with IDENTICAL code: certify_summary.json aggregates only
-voxel-wise stats, so the DVH-metric numbers (D_95|PTV70, mean|Brainstem) are meaned
-across patients from per_patient[i].radii[R].dvh_interval_widths_gy here.
+Reduction: the DVH-metric widths (D_95|PTV70, mean|Brainstem) are recomputed here by
+meaning per_patient[i].radii[R].dvh_interval_widths_gy across patients (certify_summary.json's
+`aggregate` block holds only voxel-wise stats, not per-metric DVH widths). The frac<=1Gy column,
+by contrast, is read straight from each cert's stored `aggregate.mean_frac_within_tol`. Both
+SIDES use the same code for a given column -- baseline and smoothadv go through dvh_means() and
+the same aggregate lookup -- so the comparison is apples-to-apples, but the two COLUMNS come from
+different sources (recomputed vs stored), which is why this note exists.
+
+CAVEAT: the "baseline" here is the ORIGINAL committed model, trained on the tf-lightweight aug
+path, while the smoothadv arms ran the numpy geometric path. That pipeline difference is the
+confound that inflates these deltas (see reports/certified_robustness/FINDINGS.md). For a clean
+noise-training test compare the smoothadv arm against its MATCHED control
+(certify_control_s{sigma}), not against this baseline.
+
+Run `python compare_certs.py --self-test` to validate the reduction on committed data (no GPU).
 """
 import json
 import sys
@@ -54,7 +66,45 @@ def pct(new, base):
     return f"{d:+.1f}%"
 
 
-for sigma in sys.argv[1:] or ["0.02", "0.05", "0.10"]:
+def self_test():
+    """Validate the reduction pipeline on committed certificates -- no GPU, no live run.
+
+    Loads the committed baseline + smoothadv certs for each sigma, recomputes DVH widths and
+    reads frac at the first (informative) radius, and asserts every number is finite and the
+    widths are positive. Exits non-zero on any failure so it can gate CI / a pre-run check.
+    """
+    ok = True
+    for sigma in ["0.02", "0.05", "0.10"]:
+        bpath = BASE / f"certify_s{sigma}_full" / "certify_summary.json"
+        npath = find_new(sigma)
+        if not bpath.exists():
+            print(f"[self-test] MISSING baseline cert for sigma={sigma}: {bpath}"); ok = False; continue
+        if npath is None:
+            print(f"[self-test] MISSING smoothadv cert for sigma={sigma}"); ok = False; continue
+        b, n = load(bpath), load(npath)
+        keys = [k for k in b["aggregate"] if k in n["aggregate"]]
+        if not keys:
+            print(f"[self-test] sigma={sigma}: no shared radius keys"); ok = False; continue
+        k0 = keys[0]
+        for tag, doc in (("baseline", b), ("smoothadv", n)):
+            dv = dvh_means(doc, k0)
+            for m in METRICS:
+                w = dv[m]
+                if w is None or not (w == w) or w <= 0:  # None / NaN / non-positive
+                    print(f"[self-test] sigma={sigma} {tag} radius={k0} {m}: bad width {w}"); ok = False
+            frac = doc["aggregate"][k0].get("mean_frac_within_tol")
+            if frac is None or not (0.0 <= frac <= 1.0):
+                print(f"[self-test] sigma={sigma} {tag} radius={k0}: bad frac {frac}"); ok = False
+        if ok:
+            print(f"[self-test] sigma={sigma}: OK (radius={k0}, widths+frac finite)")
+    print("[self-test] PASS" if ok else "[self-test] FAIL")
+    sys.exit(0 if ok else 1)
+
+
+if "--self-test" in sys.argv:
+    self_test()
+
+for sigma in [a for a in sys.argv[1:] if not a.startswith("-")] or ["0.02", "0.05", "0.10"]:
     bpath = BASE / f"certify_s{sigma}_full" / "certify_summary.json"
     npath = find_new(sigma)
     if npath is None:
