@@ -61,9 +61,11 @@ The larynx near-max dose (D0.1cc) is the sentinel: blur at the airway boundary i
 Static qualitative figures already exist (`../figures/dose_difference_maps.png`,
 `../figures/ct_slices.png`): P4 produces spatially structured dose errors concentrated at organ
 boundaries. Caption: *"Loss of edge definition degrades dose prediction near structure boundaries."*
-**TODO (needs a short regeneration run — see below):** the ASTRO interactive element — a
-step-through GIF of one representative patient across the P4 severity sweep (L0→L4), dose wash +
-DVH overlay.
+**Interactive element — script ready, needs one pod run:** `generate_p4_gif.py` steps one patient
+across the P4 sweep (baseline, L0→L4), rendering a dose wash + Larynx/PTV70 DVH overlay per frame
+into a GIF (+ frame PNGs). It reuses the verified `run_inference.py` path, so it's consistent with
+the sweep numbers. Run on the pod:
+`python generate_p4_gif.py --model <best>/models/epoch_100.keras --data-dir <validation-pats> --patient pt_205 --fps 2`
 
 ## Panel 7 — Conclusions (in threshold language)
 - The model tolerates **intensity-based** CT variability (noise, bias field, dental streaks)
@@ -104,9 +106,9 @@ hardening via training-time augmentation."*
 - ✅ Panel 4 table (`panel4_threshold_table.{md,csv}`).
 - ✅ Panel 5 figures (`fig_panel5_maxcrit_gy.png`, `fig_panel5_dvh_pct.png`).
 - ✅ Panel 7 conclusions + 7-min talk track (above).
-- ⏳ **Panel 6 interactive GIF** — the only blocked item. Needs regenerating perturbed CTs + model
-  predictions for ONE patient across P4 L0–L4 (5 forward passes; the volumes weren't saved). Not
-  GPU-heavy. Static qualitative figures cover the panel in the meantime.
+- ✅ **Panel 6 GIF generator written** (`generate_p4_gif.py`) — reuses the verified inference path.
+  ⏳ Needs one pod run (model + validation data; ~6 forward passes) to produce the actual GIF; the
+  volumes weren't saved locally so it can't run on the Mac. Static figures cover the panel meanwhile.
 
 ## Logistics
 - Upload fee $85 tier (Aug 8–Sep 21); **hard upload deadline Sept 21.**
