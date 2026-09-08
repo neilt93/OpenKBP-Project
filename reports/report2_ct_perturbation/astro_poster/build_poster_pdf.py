@@ -8,7 +8,6 @@ Page 2: the two severity figures at full size with captions.
 Self-contained (matplotlib only). Recomputes the table from the committed sweep JSONs
 so it stays a single source of truth. Output: ASTRO_79011_poster_draft.pdf
 """
-import json
 import os
 
 import matplotlib
@@ -16,42 +15,15 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-METRICS = os.path.normpath(os.path.join(
-    HERE, "..", "..", "..", "open-kbp-modified", "openkbp_hn_robustness", "metrics", "per_patient"))
-THRESH_GY = 1.0
+import astro_common as C
 
-FAMS = [
-    ("P1_noise",      "P1 noise",         [1, 2, 3, 4, 5], "8/12 → 100/160 HU"),
-    ("P2_bone_shift", "P2 HU shift",      [1, 2, 3, 4, 5], "5/50 → 100/1000 HU"),
-    ("P3_bias_field", "P3 bias field",    [1, 2, 3, 4, 5], "10 → 200 HU"),
-    ("P4_resolution", "P4 resolution",    [0, 1, 2, 3, 4], "0.5/0.25 → 4.0/2.0 vox"),
-    ("P5_dental",     "P5 dental streak", [1, 2, 3, 4, 5], "150/8 → 1200/24"),
-]
-GREEN, RED = "#d4efdf", "#f5b7b1"
+HERE = C.HERE
 
-base = json.load(open(os.path.join(METRICS, "baseline.json")))
-bstruct = base["per_structure"]
-
-def row_for(fam, levels):
-    best = None  # (level, shift, crit) at first crossing
-    maxabs = 0.0
-    for lvl in levels:
-        s = json.load(open(os.path.join(METRICS, f"{fam}_L{lvl}.json")))["per_structure"]
-        shifts = {k: s[k] - bstruct[k] for k in s if k in bstruct}
-        mk = max(shifts, key=lambda k: abs(shifts[k]))
-        maxabs = max(maxabs, abs(shifts[mk]))
-        if best is None and abs(shifts[mk]) > THRESH_GY:
-            best = (lvl, shifts[mk], mk)
-    if best is None:
-        return f"never (max {maxabs:.2f} Gy)", "Robust", GREEN
-    lvl, sh, mk = best
-    return f"L{lvl}: {sh:.2f} Gy ({mk.replace('_',' ')})", "SENSITIVE", RED
-
+# rows for the PDF table: [label, short sweep range, compact "visible at", verdict, cell color]
 rows = []
-for fam, label, levels, rng in FAMS:
-    vis, verdict, color = row_for(fam, levels)
-    rows.append([label, rng, vis, verdict, color])
+for fam in C.FAMILIES:
+    r = C.threshold_row(fam)
+    rows.append([r["label"], r["sweep_short"], r["visible_short"], r["verdict_short"], r["cell_color"]])
 
 # ---------------------------------------------------------------- PDF -----------
 pdf_path = os.path.join(HERE, "ASTRO_79011_poster_draft.pdf")
