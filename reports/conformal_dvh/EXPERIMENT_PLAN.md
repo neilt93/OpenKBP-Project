@@ -16,6 +16,31 @@ triptych on one model + one patient cohort:
 
 The honest accounting of what each buys — and where each fails — is the contribution.
 
+## Novelty (settled 2026-09-07 — deep lit search, 25 claims adversarially verified)
+**Verdict: "first conformal DVH intervals on a radiotherapy dose predictor" is DEFENSIBLE for the
+exact task** — no source applies conformal prediction to dose/DVH metrics of a dose predictor.
+Two guardrails:
+- **Do NOT** claim broad novelty for "conformal on image-derived clinical metrics" — already done
+  on organ/lesion **volume** (Lambert et al., MICCAI 2024, arXiv 2407.19938), **radiomic features**
+  (ConRad, arXiv 2607.08084, split-conformal + CQR), and **segmentation area** (COMPASS, ICLR 2026,
+  arXiv 2509.22240). None target dose/DVH.
+- **Do NOT** claim "first conformal under distribution shift in medical imaging" — Lambert and
+  COMPASS both handle **covariate shift** via weighted-CP reweighting. Position our twist as
+  **"first study of conformal DVH coverage COLLAPSE under CT / adversarial perturbations."**
+
+Nearest neighbors that are NOT prior art (verified):
+- arXiv 2409.20412 (conformal dose-response) = causal/pharmacological drug dosing, not radiotherapy.
+- arXiv 2606.11012 (dose-accumulation DVH coverage) = Bayesian/ensemble propagated pDVHs, **not**
+  conformal; reports empirical (Gaussian ±3σ) coverage, no distribution-free guarantee.
+- Radiotherapy conformal exists only for **segmentation/contouring** (pixel sets, PMC13291182), not dose.
+- All DVH-UQ in RT (Deep Evidential Learning, reference-cohort ±68% bands, MC-dropout/ensembles) is
+  non-conformal → not prior art for the conformal claim.
+
+**Reviewer defense to pre-empt:** show the coverage-collapse gap is distinct from covariate-shift
+recovery — add a **weighted-CP reweighting baseline** (Lambert/COMPASS style) and show it does NOT
+rescue coverage under our CT perturbations (or by how much). **Re-run the search at submission** —
+fast-moving area with 2026 preprints.
+
 ## Design (validated locally; see `conformal_dvh.py --self-test`)
 - **Split / CV+ conformal.** Calibrate on CLEAN, train-disjoint patients; the calibrator is fixed.
   Coverage is then measured as the TEST distribution shifts — widths are frozen, so shift shows up
@@ -51,14 +76,16 @@ The honest accounting of what each buys — and where each fails — is the cont
 - ⏳ **Real numbers** — blocked on regenerating the metrics with the enabler patch (needs the
   prediction CSVs + ground truth on the pod/SanDisk; predictions aren't local). Once `per_patient_dvh`
   exists in the metric JSONs, `python conformal_dvh.py` produces the coverage table with no GPU.
-- ⏳ **Novelty check** — settle "first conformal DVH intervals" before anchoring the framing on
-  "first"; conformal in medical imaging is moving fast. If prior art exists, reframe to "first under
-  distribution shift," which still stands. (Task tracked below.)
+- ✅ **Novelty check DONE** (2026-09-07) — see the Novelty section above. "First conformal DVH
+  intervals on a dose predictor" is clean; frame the twist as "coverage collapse under CT
+  perturbations," add a weighted-CP baseline, and re-run the search at submission.
 
 ## Next actions
-1. Lit search: conformal / split-conformal prediction on dose prediction, DVH metrics, or
-   segmentation-derived clinical metrics. Decide "first" vs "first under shift."
+1. ✅ Lit search done (see Novelty section).
 2. Regenerate metrics with the enabler patch (re-run `evaluate_metrics.py` over the existing
    prediction CSVs — no new inference if predictions are still on disk).
 3. Run `conformal_dvh.py`, add the coverage-vs-severity figure + threshold table, write up as the
    third leg of the triptych.
+4. Add a **weighted-CP reweighting baseline** (Lambert/COMPASS style) to show it doesn't rescue
+   coverage under CT perturbations — pre-empts the obvious reviewer objection.
+5. Re-run the novelty search immediately before submission (2026 preprints are appearing fast).
