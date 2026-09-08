@@ -88,6 +88,27 @@ git push
 All artifacts are small (metrics JSONs + a few PNGs/CSVs + one GIF) — safe to commit. Models
 (*.keras) stay gitignored.
 
+## 5. Optional new-analysis pod tasks (all reuse the same model + data)
+These were built + self-tested locally this session; each needs only inference on the pod.
+```bash
+# (a) Why-P4 frequency sensitivity: which CT spectral bands the model relies on
+python reports/report2_ct_perturbation/why_p4_frequency_sensitivity.py \
+    --model $MODEL --data-dir open-kbp-modified/provided-data/validation-pats --n-patients 10
+#     -> freq_sensitivity.csv + fig_freq_sensitivity.png (prediction: response rises with frequency)
+
+# (b) CBCT-family sweep (P6 scatter/cupping, P7 ring, P8 truncation) — extend the battery.
+#     Add P6_scatter_cupping/P7_ring/P8_truncation to configs/default.yaml perturbations, then:
+cd open-kbp-modified/openkbp_hn_robustness
+python generate_perturbed_data.py --perturbations P6_scatter_cupping P7_ring P8_truncation
+python run_inference.py --model ../${MODEL#open-kbp-modified/} --conditions P6_scatter_cupping/L1 ...  # or all
+python evaluate_metrics.py     # emits per_patient_dvh for the new families too
+cd ../.. && python reports/report2_ct_perturbation/astro_poster/build_astro_panels.py   # add rows
+
+# (c) Tighter certified DVH intervals: once the per-draw DVH-metric values are dumped from the
+#     stored smoothing draws, feed them to certify_dvh_direct (reports/certified_robustness/
+#     dvh_direct_certify.py) for correlation-aware, ~17%-narrower intervals. Pure CPU after the dump.
+```
+
 ## Notes / gotchas (from prior pod sessions)
 - `/workspace` has a ~20 GB hard quota; `df` is useless. These tasks write almost nothing, so quota
   isn't a risk here — but don't leave large checkpoints around.
