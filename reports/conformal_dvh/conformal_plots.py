@@ -11,6 +11,7 @@ so the figure shape can be checked before the pod run. Real data overwrites the 
 """
 import csv
 import os
+import sys
 
 import matplotlib
 matplotlib.use("Agg")
@@ -20,13 +21,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CSV = os.path.join(HERE, "coverage_vs_severity.csv")
 NOMINAL, BROKEN = 0.90, 0.80
 
-FAMS = [
-    ("P1_noise", "P1 noise", "#2980b9"),
-    ("P2_bone_shift", "P2 HU shift", "#e67e22"),
-    ("P3_bias_field", "P3 bias field", "#27ae60"),
-    ("P4_resolution", "P4 resolution", "#c0392b"),
-    ("P5_dental", "P5 dental streak", "#8e44ad"),
-]
+# Canonical family taxonomy shared with the ASTRO strand (same label/color per family).
+sys.path.insert(0, os.path.normpath(os.path.join(HERE, "..")))
+from perturbation_families import FAMILIES, levels_for  # noqa: E402
+
+FAMS = [(k, m["label"], m["color"]) for k, m in FAMILIES.items()]
 
 
 def load_or_demo():
@@ -43,10 +42,6 @@ def load_or_demo():
         for lvl, y in zip(lvls, ys):
             demo[f"{fam}/L{lvl}"] = y
     return demo, True
-
-
-def levels_for(fam):
-    return [0, 1, 2, 3, 4] if fam == "P4_resolution" else [1, 2, 3, 4, 5]
 
 
 def main():

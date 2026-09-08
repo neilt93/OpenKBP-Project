@@ -13,21 +13,19 @@ prediction, exceeds THRESH_GY.
 import functools
 import json
 import os
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 METRICS = os.path.normpath(os.path.join(
     HERE, "..", "..", "..", "open-kbp-modified", "openkbp_hn_robustness", "metrics", "per_patient"))
 
+# Canonical family taxonomy (label/color/levels) is shared across report strands.
+sys.path.insert(0, os.path.normpath(os.path.join(HERE, "..", "..")))
+from perturbation_families import FAMILIES, PALETTE  # noqa: E402
+
 THRESH_GY = 1.0
 GREEN, RED = "#d4efdf", "#f5b7b1"          # verdict cell fills
 
-FAMILIES = {
-    "P1_noise":      {"label": "P1 noise",         "levels": [1, 2, 3, 4, 5], "color": "#2980b9"},
-    "P2_bone_shift": {"label": "P2 HU shift",      "levels": [1, 2, 3, 4, 5], "color": "#e67e22"},
-    "P3_bias_field": {"label": "P3 bias field",    "levels": [1, 2, 3, 4, 5], "color": "#27ae60"},
-    "P4_resolution": {"label": "P4 resolution",    "levels": [0, 1, 2, 3, 4], "color": "#c0392b"},
-    "P5_dental":     {"label": "P5 dental streak", "levels": [1, 2, 3, 4, 5], "color": "#8e44ad"},
-}
 # Physical parameters per level (from the report's perturbation table).
 PHYS = {
     "P1_noise":      {1: "8/12 HU", 2: "15/25", 3: "30/50", 4: "60/100", 5: "100/160 HU"},
@@ -43,7 +41,6 @@ CLINICAL = {
     "P4_resolution": "cross-scanner slice/kernel variation ≈1–3 vox (≈L1–L3)",
     "P5_dental":     "dental streaks common in H&N (L2–L4 realistic)",
 }
-PALETTE = {fam: m["color"] for fam, m in FAMILIES.items()}
 
 
 def load(cond_file):
