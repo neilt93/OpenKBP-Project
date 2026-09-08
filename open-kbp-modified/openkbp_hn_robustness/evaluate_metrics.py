@@ -73,6 +73,17 @@ def evaluate_condition(condition_name: str, prediction_dir: Path,
         key = f"{structure}_{metric}"
         structure_errors[key] = float(dvh_errors[col].mean())
 
+    # Per-patient PER-CRITERION signed residual (prediction - reference), in Gy. This is the
+    # raw material for conformal DVH intervals (calibration quantiles + coverage checks): the
+    # numbers already exist here, we were only ever saving their cohort mean. |residual| gives
+    # the nonconformity score; the sign is kept in case asymmetric intervals are wanted later.
+    signed = evaluator.prediction_dvh_metrics_df - evaluator.reference_dvh_metrics_df
+    per_patient_dvh = {}
+    for col in signed.columns:
+        metric, structure = col
+        key = f"{structure}_{metric}"
+        per_patient_dvh[key] = {str(pt): float(signed.loc[pt, col]) for pt in signed.index}
+
     return {
         "condition": condition_name,
         "dose_score": float(dose_score),
@@ -80,6 +91,7 @@ def evaluate_condition(condition_name: str, prediction_dir: Path,
         "n_patients": len(prediction_csvs),
         "per_structure": structure_errors,
         "per_patient_dose": evaluator.dose_errors.to_dict(),
+        "per_patient_dvh": per_patient_dvh,
     }
 
 
