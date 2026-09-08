@@ -4,6 +4,9 @@ from .p2_bone_shift import BoneWeightedShift
 from .p3_bias_field import BiasField
 from .p4_resolution import ResolutionDegradation
 from .p5_dental_artifact import DentalArtifact
+from .p6_scatter_cupping import ScatterCupping
+from .p7_ring import RingArtifact
+from .p8_truncation import Truncation
 
 ALL_PERTURBATIONS = [
     AcquisitionNoise,
@@ -11,4 +14,8 @@ ALL_PERTURBATIONS = [
     BiasField,
     ResolutionDegradation,
     DentalArtifact,
+    # CBCT-characteristic families (commissioning-tolerances study for online adaptive RT):
+    ScatterCupping,
+    RingArtifact,
+    Truncation,
 ]
