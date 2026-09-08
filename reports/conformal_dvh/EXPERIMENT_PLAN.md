@@ -86,6 +86,10 @@ fast-moving area with 2026 preprints.
    prediction CSVs — no new inference if predictions are still on disk).
 3. Run `conformal_dvh.py`, add the coverage-vs-severity figure + threshold table, write up as the
    third leg of the triptych.
-4. Add a **weighted-CP reweighting baseline** (Lambert/COMPASS style) to show it doesn't rescue
-   coverage under CT perturbations — pre-empts the obvious reviewer objection.
+4. ✅ **Weighted-CP baseline implemented** (`weighted_threshold`/`weighted_coverage`) + validated:
+   weighted CP recovers *covariate* shift (0.84→0.93) but NOT *response* shift (0.64→0.64) — CT
+   perturbations worsen P(Y|X), which reweighting provably can't fix. This is the reviewer pre-empt.
+   Also added a **Bonferroni joint baseline**: max-score joint is tighter at equal validity
+   (Q≈2.88 vs 2.93) and Bonferroni is **infeasible at realistic n≤100** (needs the ~99.6th
+   percentile of ≤100 points → +inf) — an independent argument for the max-score band.
 5. Re-run the novelty search immediately before submission (2026 preprints are appearing fast).
