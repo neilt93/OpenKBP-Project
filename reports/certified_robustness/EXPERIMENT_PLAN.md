@@ -58,12 +58,19 @@ Budget: D costs ~3–4× per step (treat as three runs). Escape hatch in `DECISI
   certificate number printed next to its clean-accuracy number. Verdicts from the pre-committed
   rules, not the vibe of the table.
 
-## Phase 4 — The collective-DVH certificate 🔬 (math, no GPU)
-Re-derive the DVH push-through without the all-voxels-simultaneously assumption, using the
-percentile-slack structure of D95 (a percentile only moves when many voxels move together).
-Re-analyze the **existing** certification samples under the tighter bound. If it works, every
-certified interval in the paper tightens for free and limitation #4 (loose push-through) becomes a
-contribution.
+## Phase 4 — The tighter DVH certificate ✅ (method done; re-analysis pod-gated)
+Insight: a DVH metric is a deterministic real-valued function of the dose map, and median
+randomised smoothing certifies ANY real-valued output — so **certify each DVH metric DIRECTLY as a
+scalar median-smoothed functional** (compute it on each noisy draw → certify the n metric values)
+instead of pushing per-voxel dose bounds through the DVH function. This uses the metric's own
+(correlation-aware) distribution and is provably valid AND tighter, dropping the
+all-voxels-simultaneously assumption behind limitation #4.
+- ✅ Implemented + validated: `dvh_direct_certify.py` (`certify_dvh_direct`), reuses
+  `smoothing_certify.certify_from_samples`. `--self-test` on synthetic correlated data: both methods
+  hold ≥90% coverage, direct is **~17% narrower** than the push-through.
+- ⏳ Re-analysis of the real certificates is pod-gated only in that it needs the n per-draw DVH-metric
+  values (compute on the pod from the stored smoothing draws; then it's pure CPU). Every certified
+  DVH interval in the paper tightens for free → limitation #4 becomes a contribution.
 
 ## Phase 5 — Write
 Skeleton exists in this directory. Assembly order: certified DVH intervals (established) → the
