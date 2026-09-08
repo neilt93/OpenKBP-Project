@@ -124,6 +124,38 @@ perturbations:
         n_streaks: 24
         metal_spot_hu: 4095.0
 
+  # CBCT-characteristic families (commissioning-tolerances study). Levels mirror the class
+  # defaults; the generator uses class .levels, run_inference/evaluate_metrics enumerate these.
+  P6_scatter_cupping:
+    enabled: true
+    class: ScatterCupping
+    levels:
+      L1: {amplitude_hu: 20.0}
+      L2: {amplitude_hu: 40.0}
+      L3: {amplitude_hu: 80.0}
+      L4: {amplitude_hu: 120.0}
+      L5: {amplitude_hu: 200.0}
+
+  P7_ring:
+    enabled: true
+    class: RingArtifact
+    levels:
+      L1: {amplitude_hu: 20.0, n_rings: 12}
+      L2: {amplitude_hu: 40.0, n_rings: 12}
+      L3: {amplitude_hu: 80.0, n_rings: 12}
+      L4: {amplitude_hu: 120.0, n_rings: 12}
+      L5: {amplitude_hu: 200.0, n_rings: 12}
+
+  P8_truncation:
+    enabled: true
+    class: Truncation
+    levels:
+      L1: {fov_frac: 0.95, rim_hu: 40.0}
+      L2: {fov_frac: 0.90, rim_hu: 80.0}
+      L3: {fov_frac: 0.85, rim_hu: 120.0}
+      L4: {fov_frac: 0.80, rim_hu: 160.0}
+      L5: {fov_frac: 0.75, rim_hu: 200.0}
+
 # Model inference settings
 inference:
   batch_size: 1
