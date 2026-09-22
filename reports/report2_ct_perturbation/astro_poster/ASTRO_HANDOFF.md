@@ -7,7 +7,8 @@ families of clinically realistic CT perturbations.
 ---
 
 ## 1. Poster identity
-- **Title:** Robustness of Deep-Learning Dose Prediction in Head-and-Neck Radiotherapy to Clinically Realistic CT Perturbations
+- **Official title (submitted to ASTRO, abstract LOCKED — use this verbatim):** "Assessing the Generalizability and Robustness of Deep-Learning Dose Prediction in Head-and-Neck Radiotherapy to Clinically Realistic CT Perturbations"
+- (A shortened variant, "Robustness of Deep-Learning Dose Prediction in Head-and-Neck Radiotherapy to Clinically Realistic CT Perturbations," was used on an earlier draft — prefer the official title above.)
 - **Abstract #:** 79011 (ASTRO 2026 ePoster; PQA 05: Physics; Tue Sept 29). Digital kiosk ePoster; 7-min slot; interactive element encouraged. Upload deadline (final): Monday.
 - **Authors:** Neil Tripathi¹, Rahim Chowdhury², Lei Ren³, Amit Sawant³, Birjoo Vaishnav³ (presenter of record). ¹New York University; ²UMD St. Joseph Medical Center; ³University of Maryland School of Medicine, Dept. of Radiation Oncology.
 - **Format requested by presenter:** the AAPM poster style (44"×44" square, section-header bars: ABSTRACT, INTRODUCTION, METHODS, RESULTS, DISCUSSION, CONCLUSIONS, FUTURE WORK, REFERENCES, CONTACT). No vendor/commercial names (ACCME).
@@ -95,12 +96,17 @@ Maximum absolute change on **any single DVH criterion** (cohort mean, Gy), the s
 | **P4 resolution** | 0.5/0.25 → 4.0/2.0 vox | **L2 (2.0/1.0 vox): 1.15 Gy on larynx D0.1cc** | slice/kernel variation ≈1–3 vox | **SENSITIVE — the failure mode** |
 | P5 dental streak | 150/8 → 1200/24 | never (max 0.33 Gy) | streaks common in H&N | Robust |
 
-## 7. Figures (ready-made PNGs; describe or request regeneration)
-1. **CT perturbation examples** — `ct_slices.png`: one patient, unperturbed CT + all 5 perturbed CTs at intermediate severity (top row) and difference maps (bottom). Resolution visibly blurs boundaries; intensity families leave edges intact.
-2. **Threshold / severity curve** — `fig_panel5_maxcrit_gy.png`: max per-criterion DVH shift (Gy) vs severity level, five family lines + dashed 1.0 Gy visibility line. P4 crosses between L1 and L2 and climbs; others hug the floor.
-3. **Dose difference maps** — `dose_difference_maps.png`: predicted dose (top) + difference-from-baseline (bottom) per family; P4 shows spatially structured boundary errors, others near-zero.
-4. (optional) `degradation_curves.png`, `degradation_heatmap.png`, `structure_radar.png`, `summary_bars.png` — additional views of the same data.
-5. (optional interactive element for the kiosk) a GIF stepping one patient through P4 L0→L4 (script exists; needs the model + data to run).
+## 7. Figures (all PNGs included in the zip; use any subset)
+All are the **original figures we generated** for this study, 40 test patients.
+1. **`ct_slices.png`** — CT perturbation examples: one patient, unperturbed CT + all 5 perturbed CTs at intermediate severity (top row) and difference maps (bottom). Resolution visibly blurs boundaries; intensity families leave edges intact. *(Poster Figure 1.)*
+2. **`fig_panel5_maxcrit_gy.png`** — Threshold / severity curve: max per-criterion DVH shift (Gy) vs severity level, five family lines + dashed 1.0 Gy visibility line. P4 crosses between L1 and L2 and climbs; others hug the floor. *(Poster Figure 2 — the money figure.)*
+3. **`dose_difference_maps.png`** — predicted dose (top) + difference-from-baseline (bottom) per family; P4 shows spatially structured boundary errors, others near-zero. *(Poster Figure 3.)*
+4. **`degradation_curves.png`** — dose-score (Gy) and DVH-score degradation vs severity, per family; Resolution dominant, Bone Shift late take-off at L4–L5.
+5. **`degradation_heatmap.png`** — family × severity-level grid of degradation magnitude.
+6. **`structure_radar.png`** — per-structure error ratio vs baseline at the highest level; Resolution spreads most on larynx, mandible, parotids.
+7. **`summary_bars.png`** — bar chart of dose- and DVH-score across all 26 conditions.
+8. **`fig_panel5_dvh_pct.png`** — aggregate DVH-score degradation (%) vs severity (twin of Fig 2).
+- (Optional kiosk interactive element) a GIF stepping one patient through P4 L0→L4; script exists but needs the model + data to run (not in this package).
 
 ## 8. Poster body text (formal, ready to paste)
 

@@ -24,8 +24,9 @@ FIGDIR = os.path.normpath(os.path.join(HERE, "..", "..", "..",
 OUT = os.path.join(HERE, "ASTRO_79011_poster.pptx")
 FONT = "Calibri"
 
-TITLE = ("Robustness of Deep-Learning Dose Prediction in Head-and-Neck Radiotherapy "
-         "to Clinically Realistic CT Perturbations")
+# Official ASTRO #79011 submitted title (abstract is locked; publishes as-submitted).
+TITLE = ("Assessing the Generalizability and Robustness of Deep-Learning Dose Prediction in "
+         "Head-and-Neck Radiotherapy to Clinically Realistic CT Perturbations")
 AUTHORS = ["Neil Tripathi¹, Rahim Chowdhury², Lei Ren³, Amit Sawant³, Birjoo Vaishnav³",
            "¹New York University    ²UMD St. Joseph Medical Center    "
            "³University of Maryland School of Medicine, Department of Radiation Oncology"]
@@ -136,7 +137,7 @@ FIG3_CAP = ("Figure 3. Predicted dose (top row) and difference-from-baseline map
 BODY, CAP, SUB = 24, 18, 22
 # match-substring -> (new lines, font size). Section-header boxes (all-caps) are left untouched.
 RULES = [
-    ("Adversarial Robustness Evaluation", ([TITLE], 72)),
+    ("Adversarial Robustness Evaluation", ([TITLE], 60)),
     ("Rahim Chowdhury", ([AUTHORS[0]], 40)),
     ("increasingly used in radiotherapy", (ABSTRACT, BODY)),
     ("treatment planning models are increasingly", (INTRO, BODY)),
