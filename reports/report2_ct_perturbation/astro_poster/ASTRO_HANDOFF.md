@@ -98,6 +98,18 @@ Maximum absolute change on **any single DVH criterion** (cohort mean, Gy), the s
 
 ## 7. Figures (all PNGs included in the zip; use any subset)
 All are the **original figures we generated** for this study, 40 test patients.
+
+**Orientation note (RESOLVES Birjoo's comment).** `ct_slices.png` and `dose_difference_maps.png`
+are genuine OpenKBP data (patient pt_201, read from the real `ct.csv` via `load_ct_volume`), but the
+"axial slice 64" caption is a **mislabel** — they are actually **coronal** views. The generator
+sliced volume axis 0, and OpenKBP's raw axes are (A-P, L-R, S-I) (verified in
+`provided_code/network_functions.py`), so an axis-0 slice is the L-R×S-I (coronal) plane — hence the
+head-and-shoulders appearance. Fix committed in `visualize_results.py` (`SLICE_PLANE="axial"` now
+slices the S-I axis for a true transverse view); **regenerate these two figures with the model +
+OpenKBP data to obtain correctly-oriented, correctly-labeled axial panels** (verify in-plane
+up/left on first render). All quantitative results are unaffected — only these two illustrative
+panels need regeneration.
+
 1. **`ct_slices.png`** — CT perturbation examples: one patient, unperturbed CT + all 5 perturbed CTs at intermediate severity (top row) and difference maps (bottom). Resolution visibly blurs boundaries; intensity families leave edges intact. *(Poster Figure 1.)*
 2. **`fig_panel5_maxcrit_gy.png`** — Threshold / severity curve: max per-criterion DVH shift (Gy) vs severity level, five family lines + dashed 1.0 Gy visibility line. P4 crosses between L1 and L2 and climbs; others hug the floor. *(Poster Figure 2 — the money figure.)*
 3. **`dose_difference_maps.png`** — predicted dose (top) + difference-from-baseline (bottom) per family; P4 shows spatially structured boundary errors, others near-zero. *(Poster Figure 3.)*

@@ -334,6 +334,26 @@ def plot_structure_radar(details: list, figures_dir: Path) -> None:
     print(f"  Saved structure_radar.png/pdf")
 
 
+# Which anatomical plane to display. OpenKBP raw volume axes are (A-P, L-R, S-I) — verified in
+# provided_code/network_functions.py. Therefore slicing axis 0 = CORONAL and axis 2 = AXIAL
+# (transverse). The earlier figures sliced axis 0 (coronal) but were captioned "axial"; default is
+# now "axial" (the conventional radiotherapy view). NOTE: the in-plane up/left orientation of the
+# axial view should be eyeballed once on regeneration and flipped (np.flipud/np.fliplr) if needed.
+SLICE_PLANE = "axial"
+
+
+def get_slice_index(vol, plane):
+    return (vol.shape[2] if plane == "axial" else vol.shape[0]) // 2
+
+
+def get_slice(vol, plane, idx):
+    """Return a display-oriented 2D slice. axis0=A-P, axis1=L-R, axis2=S-I."""
+    if plane == "coronal":
+        return np.rot90(vol[idx, :, :], k=1)          # L-R x S-I, head up
+    # axial (transverse): A-P x L-R at fixed S-I; anterior toward top (verify L/R on first render)
+    return np.flipud(vol[:, :, idx])
+
+
 def plot_ct_slices(config: dict, figures_dir: Path) -> None:
     """Show example CT slices: clean vs perturbed for one patient per perturbation."""
     from openkbp_hn_robustness.perturbations.base import load_ct_volume
@@ -351,24 +371,26 @@ def plot_ct_slices(config: dict, figures_dir: Path) -> None:
         return
 
     original_vol, _ = load_ct_volume(original_dir)
-    mid_slice = original_vol.shape[0] // 2
+    # OpenKBP raw volume axes are (A-P, L-R, S-I) — verified in provided_code/network_functions.py
+    # (BDHWC: D=axis1=A-P, H=axis2=L-R, W=axis3=S-I). So slicing axis 0 gives a CORONAL plane and
+    # slicing axis 2 gives an AXIAL (transverse) plane. get_slice() returns the plane upright.
+    mid_slice = get_slice_index(original_vol, SLICE_PLANE)
 
     p_names = list(PERTURBATION_LABELS.keys())
     n_perturb = len(p_names)
 
     fig, axes = plt.subplots(2, n_perturb + 1, figsize=(3 * (n_perturb + 1), 8))
 
-    # Rotate slices 90° CCW so anatomy is upright (head at top)
-    def orient(slc):
-        return np.rot90(slc, k=1)
+    def orient(vol):
+        return get_slice(vol, SLICE_PLANE, mid_slice)
 
     # Original
     for row in range(2):
         if row == 0:
-            axes[row, 0].imshow(orient(original_vol[mid_slice]), cmap='gray',
+            axes[row, 0].imshow(orient(original_vol), cmap='gray',
                                 vmin=0, vmax=2000, aspect='equal')
         else:
-            axes[row, 0].imshow(orient(np.zeros_like(original_vol[mid_slice])),
+            axes[row, 0].imshow(np.zeros_like(orient(original_vol)),
                                 cmap='RdBu_r', vmin=-200, vmax=200, aspect='equal')
         axes[row, 0].set_title("Original" if row == 0 else "Diff")
         axes[row, 0].axis('off')
@@ -380,10 +402,10 @@ def plot_ct_slices(config: dict, figures_dir: Path) -> None:
 
         if pert_dir.exists():
             pert_vol, _ = load_ct_volume(pert_dir)
-            axes[0, col].imshow(orient(pert_vol[mid_slice]), cmap='gray',
+            axes[0, col].imshow(orient(pert_vol), cmap='gray',
                                 vmin=0, vmax=2000, aspect='equal')
-            diff = pert_vol[mid_slice] - original_vol[mid_slice]
-            axes[1, col].imshow(orient(diff), cmap='RdBu_r',
+            diff = orient(pert_vol) - orient(original_vol)
+            axes[1, col].imshow(diff, cmap='RdBu_r',
                                 vmin=-200, vmax=200, aspect='equal')
         else:
             axes[0, col].text(0.5, 0.5, 'N/A', ha='center', va='center',
@@ -399,7 +421,7 @@ def plot_ct_slices(config: dict, figures_dir: Path) -> None:
     axes[0, 0].set_ylabel("CT (HU)")
     axes[1, 0].set_ylabel("Difference")
 
-    plt.suptitle(f"Example CT Slices — {example_pid} (axial slice {mid_slice})", fontsize=13)
+    plt.suptitle(f"Example CT Slices — {example_pid} ({SLICE_PLANE} slice {mid_slice})", fontsize=13)
     plt.tight_layout()
     fig.savefig(figures_dir / "ct_slices.png", bbox_inches='tight')
     fig.savefig(figures_dir / "ct_slices.pdf", bbox_inches='tight')
@@ -428,24 +450,23 @@ def plot_dose_difference_maps(config: dict, figures_dir: Path) -> None:
     baseline_dose[df.index.values] = df["data"].values
     baseline_dose = baseline_dose.reshape(VOLUME_SHAPE)
 
-    mid_slice = VOLUME_SHAPE[0] // 2
+    mid_slice = get_slice_index(baseline_dose, SLICE_PLANE)
 
     p_names = list(PERTURBATION_LABELS.keys())
     n_perturb = len(p_names)
 
     fig, axes = plt.subplots(2, n_perturb + 1, figsize=(3 * (n_perturb + 1), 8))
 
-    # Rotate slices 90° CCW so anatomy is upright (head at top)
-    def orient(slc):
-        return np.rot90(slc, k=1)
+    def orient(vol):
+        return get_slice(vol, SLICE_PLANE, mid_slice)
 
     # Baseline dose
     dose_max = np.percentile(baseline_dose[baseline_dose > 0], 99) if baseline_dose.max() > 0 else 70
-    axes[0, 0].imshow(orient(baseline_dose[mid_slice]), cmap='jet', vmin=0,
+    axes[0, 0].imshow(orient(baseline_dose), cmap='jet', vmin=0,
                        vmax=dose_max, aspect='equal')
     axes[0, 0].set_title("Baseline")
     axes[0, 0].axis('off')
-    axes[1, 0].imshow(orient(np.zeros_like(baseline_dose[mid_slice])), cmap='RdBu_r',
+    axes[1, 0].imshow(np.zeros_like(orient(baseline_dose)), cmap='RdBu_r',
                        vmin=-5, vmax=5, aspect='equal')
     axes[1, 0].set_title("Diff")
     axes[1, 0].axis('off')
@@ -460,10 +481,10 @@ def plot_dose_difference_maps(config: dict, figures_dir: Path) -> None:
             pert_dose[df_p.index.values] = df_p["data"].values
             pert_dose = pert_dose.reshape(VOLUME_SHAPE)
 
-            axes[0, col].imshow(orient(pert_dose[mid_slice]), cmap='jet', vmin=0,
+            axes[0, col].imshow(orient(pert_dose), cmap='jet', vmin=0,
                                  vmax=dose_max, aspect='equal')
-            diff = pert_dose[mid_slice] - baseline_dose[mid_slice]
-            axes[1, col].imshow(orient(diff), cmap='RdBu_r', vmin=-5, vmax=5,
+            diff = orient(pert_dose) - orient(baseline_dose)
+            axes[1, col].imshow(diff, cmap='RdBu_r', vmin=-5, vmax=5,
                                  aspect='equal')
         else:
             axes[0, col].text(0.5, 0.5, 'N/A', ha='center', va='center',
@@ -479,7 +500,7 @@ def plot_dose_difference_maps(config: dict, figures_dir: Path) -> None:
     axes[0, 0].set_ylabel("Dose (Gy)")
     axes[1, 0].set_ylabel("Dose Diff (Gy)")
 
-    plt.suptitle(f"Dose Predictions — {example_pid} (axial slice {mid_slice})", fontsize=13)
+    plt.suptitle(f"Dose Predictions — {example_pid} ({SLICE_PLANE} slice {mid_slice})", fontsize=13)
     plt.tight_layout()
     fig.savefig(figures_dir / "dose_difference_maps.png", bbox_inches='tight')
     fig.savefig(figures_dir / "dose_difference_maps.pdf", bbox_inches='tight')
