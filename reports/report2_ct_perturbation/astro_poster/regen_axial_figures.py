@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Regenerate ct_slices + dose_difference_maps as TRUE AXIAL (transverse) slices, no GPU.
+"""Regenerate ct_slices + dose_difference_maps as TRUE AXIAL slices, matching the AAPM adversarial
+figure's exact orientation/recipe (save_adversarial_ct_figures.py), no GPU.
 
-Reads OpenKBP CTs, perturbed CTs, and the already-computed prediction CSVs straight from the
-SanDisk warehouse (CPU only, pandas/matplotlib). OpenKBP raw axes are (A-P, L-R, S-I); an axial
-slice fixes S-I (axis 2). We pick the S-I slice carrying the most dose so the panel shows the
-treated region. Outputs to /tmp first for visual orientation check.
+Reads OpenKBP CTs, perturbed CTs, PTV masks, and the already-computed prediction CSVs from the
+SanDisk warehouse (CPU only). Axes (D,H,W)=(A-P,L-R,S-I); axial slice = (D,H) at the max-PTV-area
+S-I index; crop to the body bbox; display imshow(img.T, origin='lower') so anatomy fills the frame
+exactly like the adversarial poster figure.
 """
 import os
 import numpy as np
@@ -18,63 +19,98 @@ VAL = f"{SD}/provided-data/validation-pats"
 PERT = f"{SD}/openkbp_hn_robustness/data_perturbed"
 PRED = f"{SD}/openkbp_hn_robustness/predictions"
 SHAPE = (128, 128, 128)
-PID = "pt_201"
-LEVEL = "L2"
+PID, LEVEL = "pt_201", "L2"
+CT_MAX, HU_OFFSET = 4095.0, 1024.0
+WIN_LO, WIN_HI = 40.0 - 200.0, 40.0 + 200.0        # soft-tissue window (true HU), as in the AAPM fig
 FAMILIES = [("P1_noise", "Acq. Noise"), ("P2_bone_shift", "Bone Shift"),
             ("P3_bias_field", "Bias Field"), ("P4_resolution", "Resolution"),
             ("P5_dental", "Dental Art.")]
 OUT = "/tmp"
 
 
-def load_csv_vol(path):
+def load_vol(path):
     df = pd.read_csv(path, index_col=0)
     v = np.zeros(int(np.prod(SHAPE)))
     v[df.index.values] = df["data"].values
     return v.reshape(SHAPE)
 
 
-def axial(vol, idx):
-    """Axial (transverse) slice: fix S-I (axis 2) -> (A-P, L-R). flipud puts anterior at top."""
-    return np.flipud(vol[:, :, idx])
+def load_mask(path):
+    df = pd.read_csv(path, index_col=0)
+    m = np.zeros(int(np.prod(SHAPE)), dtype=bool)
+    m[np.array(df.index).squeeze()] = True
+    return m.reshape(SHAPE)
+
+
+def ptv_slice_index():
+    """S-I index (axis 2) with the largest total PTV area — the clinically relevant axial slice."""
+    area = np.zeros(SHAPE[2])
+    for name in ("PTV56", "PTV63", "PTV70"):
+        p = f"{VAL}/{PID}/{name}.csv"
+        if os.path.exists(p):
+            area += load_mask(p).sum(axis=(0, 1))
+    return int(np.argmax(area)) if area.any() else SHAPE[2] // 2
 
 
 def main():
-    base_ct = load_csv_vol(f"{VAL}/{PID}/ct.csv")
-    base_dose = load_csv_vol(f"{PRED}/baseline/{PID}.csv")
-    # choose the axial (S-I) index with the most dose -> shows the treated region
-    z = int(np.argmax(base_dose.sum(axis=(0, 1))))
-    print(f"axial S-I index (max-dose) = {z}")
+    w = ptv_slice_index()
+    print(f"axial S-I slice (max PTV area) = {w}")
+    base_ct = load_vol(f"{VAL}/{PID}/ct.csv")           # stored HU (trueHU + 1024)
+    base_dose = load_vol(f"{PRED}/baseline/{PID}.csv")  # Gy
+
+    def ax(vol):
+        return vol[:, :, w]                             # (D,H) axial slice
+
+    # crop to the body bbox (drop the air border) — computed from the CT
+    body = ax(base_ct) / CT_MAX > 0.12
+    ys, xs = np.where(body)
+    mg = 6
+    d0, d1 = max(ys.min() - mg, 0), min(ys.max() + mg + 1, body.shape[0])
+    h0, h1 = max(xs.min() - mg, 0), min(xs.max() + mg + 1, body.shape[1])
+    crop = lambda a: a[d0:d1, h0:h1]
+    hu = lambda a: crop(ax(a)) - HU_OFFSET              # display in true HU
+    show = lambda axi, img, **kw: axi.imshow(img.T, origin="lower", interpolation="bilinear", **kw)
+    body_c = crop(body).astype(float)
 
     # ---- CT slices ----
-    fig, ax = plt.subplots(2, len(FAMILIES) + 1, figsize=(3 * (len(FAMILIES) + 1), 7))
-    ax[0, 0].imshow(axial(base_ct, z), cmap="gray", vmin=0, vmax=2000, aspect="equal")
-    ax[0, 0].set_title("Original"); ax[0, 0].axis("off")
-    ax[1, 0].axis("off"); ax[1, 0].set_title("Diff")
+    n = len(FAMILIES) + 1
+    fig, A = plt.subplots(2, n, figsize=(2.6 * n, 6))
+    show(A[0, 0], hu(base_ct), cmap="gray", vmin=WIN_LO, vmax=WIN_HI)
+    A[0, 0].set_title("Original"); A[1, 0].set_ylabel("Difference (HU)")
+    for r in (0, 1):
+        A[r, 0].set_xticks([]); A[r, 0].set_yticks([])
+    A[1, 0].imshow(np.zeros_like(hu(base_ct)).T, origin="lower", cmap="seismic", vmin=-80, vmax=80)
     for i, (fam, lab) in enumerate(FAMILIES):
         c = i + 1
-        pv = load_csv_vol(f"{PERT}/{fam}/{LEVEL}/{PID}/ct.csv")
-        ax[0, c].imshow(axial(pv, z), cmap="gray", vmin=0, vmax=2000, aspect="equal")
-        ax[1, c].imshow(axial(pv, z) - axial(base_ct, z), cmap="RdBu_r", vmin=-200, vmax=200,
-                        aspect="equal")
-        ax[0, c].set_title(f"{lab} {LEVEL}"); ax[0, c].axis("off"); ax[1, c].axis("off")
-    fig.suptitle(f"Example CT Slices — {PID} (axial slice {z})", fontsize=13)
+        pv = load_vol(f"{PERT}/{fam}/{LEVEL}/{PID}/ct.csv")
+        show(A[0, c], hu(pv), cmap="gray", vmin=WIN_LO, vmax=WIN_HI)
+        diff = (crop(ax(pv)) - crop(ax(base_ct))) * body_c       # HU difference within body
+        show(A[1, c], diff, cmap="seismic", vmin=-80, vmax=80)
+        A[0, c].set_title(f"{lab} {LEVEL}")
+        for r in (0, 1):
+            A[r, c].set_xticks([]); A[r, c].set_yticks([])
+    fig.suptitle(f"Example CT Slices — {PID} (axial slice {w})", fontsize=13)
     fig.tight_layout(); fig.savefig(f"{OUT}/ct_slices_axial.png", dpi=200, bbox_inches="tight")
     plt.close(fig)
 
     # ---- Dose predictions ----
-    dmax = float(np.percentile(base_dose[base_dose > 0], 99)) if base_dose.max() > 0 else 70
-    fig, ax = plt.subplots(2, len(FAMILIES) + 1, figsize=(3 * (len(FAMILIES) + 1), 7))
-    ax[0, 0].imshow(axial(base_dose, z), cmap="jet", vmin=0, vmax=dmax, aspect="equal")
-    ax[0, 0].set_title("Baseline"); ax[0, 0].axis("off")
-    ax[1, 0].axis("off"); ax[1, 0].set_title("Diff")
+    dmax = float(np.percentile(base_dose[base_dose > 0], 99))
+    doseax = lambda a: crop(ax(a))
+    fig, A = plt.subplots(2, n, figsize=(2.6 * n, 6))
+    show(A[0, 0], doseax(base_dose), cmap="jet", vmin=0, vmax=dmax)
+    A[0, 0].set_title("Baseline"); A[1, 0].set_ylabel("Dose diff (Gy)")
+    for r in (0, 1):
+        A[r, 0].set_xticks([]); A[r, 0].set_yticks([])
+    A[1, 0].imshow(np.zeros_like(doseax(base_dose)).T, origin="lower", cmap="RdBu_r", vmin=-5, vmax=5)
     for i, (fam, lab) in enumerate(FAMILIES):
         c = i + 1
-        pd_ = load_csv_vol(f"{PRED}/{fam}/{LEVEL}/{PID}.csv")
-        ax[0, c].imshow(axial(pd_, z), cmap="jet", vmin=0, vmax=dmax, aspect="equal")
-        ax[1, c].imshow(axial(pd_, z) - axial(base_dose, z), cmap="RdBu_r", vmin=-5, vmax=5,
-                        aspect="equal")
-        ax[0, c].set_title(f"{lab} {LEVEL}"); ax[0, c].axis("off"); ax[1, c].axis("off")
-    fig.suptitle(f"Dose Predictions — {PID} (axial slice {z})", fontsize=13)
+        pdose = load_vol(f"{PRED}/{fam}/{LEVEL}/{PID}.csv")
+        show(A[0, c], doseax(pdose), cmap="jet", vmin=0, vmax=dmax)
+        show(A[1, c], doseax(pdose) - doseax(base_dose), cmap="RdBu_r", vmin=-5, vmax=5)
+        A[0, c].set_title(f"{lab} {LEVEL}")
+        for r in (0, 1):
+            A[r, c].set_xticks([]); A[r, c].set_yticks([])
+    fig.suptitle(f"Dose Predictions — {PID} (axial slice {w})", fontsize=13)
     fig.tight_layout(); fig.savefig(f"{OUT}/dose_difference_axial.png", dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(f"wrote {OUT}/ct_slices_axial.png and {OUT}/dose_difference_axial.png")
