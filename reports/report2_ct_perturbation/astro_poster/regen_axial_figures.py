@@ -25,7 +25,7 @@ WIN_LO, WIN_HI = 40.0 - 200.0, 40.0 + 200.0        # soft-tissue window (true HU
 FAMILIES = [("P1_noise", "Acq. Noise"), ("P2_bone_shift", "Bone Shift"),
             ("P3_bias_field", "Bias Field"), ("P4_resolution", "Resolution"),
             ("P5_dental", "Dental Art.")]
-OUT = "/tmp"
+OUT = os.path.dirname(os.path.abspath(__file__))
 
 
 def load_vol(path):
@@ -69,10 +69,9 @@ def main():
     h0, h1 = max(xs.min() - mg, 0), min(xs.max() + mg + 1, body.shape[1])
     crop = lambda a: a[d0:d1, h0:h1]
     hu = lambda a: crop(ax(a)) - HU_OFFSET              # display in true HU
-    # Conventional radiological AXIAL orientation: rows = A-P (anterior at top, since mandible sits
-    # at low axis0 and cord at high axis0), cols = L-R (patient-left at right, parotid geometry).
-    # No transpose (the adversarial code's img.T rotated the axial plane 90°, which read as coronal).
-    show = lambda axi, img, **kw: axi.imshow(img, origin="upper", interpolation="bilinear", **kw)
+    # Presenter request (Birjoo, 2026-09-22): flip 180 in y — anterior points down.
+    show = lambda axi, img, **kw: axi.imshow(np.flipud(np.asarray(img)), origin="upper",
+                                             interpolation="bilinear", **kw)
     body_c = crop(body).astype(float)
 
     # ---- CT slices ----
@@ -82,7 +81,7 @@ def main():
     A[0, 0].set_title("Original"); A[1, 0].set_ylabel("Difference (HU)")
     for r in (0, 1):
         A[r, 0].set_xticks([]); A[r, 0].set_yticks([])
-    A[1, 0].imshow(np.zeros_like(hu(base_ct)), origin="upper", cmap="seismic", vmin=-80, vmax=80)
+    show(A[1, 0], np.zeros_like(hu(base_ct)), cmap="seismic", vmin=-80, vmax=80)
     for i, (fam, lab) in enumerate(FAMILIES):
         c = i + 1
         pv = load_vol(f"{PERT}/{fam}/{LEVEL}/{PID}/ct.csv")
@@ -104,7 +103,7 @@ def main():
     A[0, 0].set_title("Baseline"); A[1, 0].set_ylabel("Dose diff (Gy)")
     for r in (0, 1):
         A[r, 0].set_xticks([]); A[r, 0].set_yticks([])
-    A[1, 0].imshow(np.zeros_like(doseax(base_dose)), origin="upper", cmap="RdBu_r", vmin=-5, vmax=5)
+    show(A[1, 0], np.zeros_like(doseax(base_dose)), cmap="RdBu_r", vmin=-5, vmax=5)
     for i, (fam, lab) in enumerate(FAMILIES):
         c = i + 1
         pdose = load_vol(f"{PRED}/{fam}/{LEVEL}/{PID}.csv")

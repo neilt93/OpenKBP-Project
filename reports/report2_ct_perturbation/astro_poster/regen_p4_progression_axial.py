@@ -60,7 +60,9 @@ def main():
     h0, h1 = max(xs.min() - mg, 0), min(xs.max() + mg + 1, body.shape[1])
     crop = lambda a: a[d0:d1, h0:h1]
     hu = lambda a: crop(ax(a)) - HU_OFFSET
-    show = lambda axi, img, **kw: axi.imshow(img, origin="upper", interpolation="bilinear", **kw)
+    # Presenter request (Birjoo, 2026-09-22): flip 180 in y — anterior points down
+    show = lambda axi, img, **kw: axi.imshow(np.flipud(np.asarray(img)), origin="upper",
+                                             interpolation="bilinear", **kw)
     body_c = crop(body).astype(float)
 
     # ---- CT progression: baseline + P4 L0..L4 (top), CT difference (bottom) ----
@@ -69,7 +71,7 @@ def main():
     show(A[0, 0], hu(base_ct), cmap="gray", vmin=WIN_LO, vmax=WIN_HI)
     A[0, 0].set_title("Original")
     A[1, 0].set_ylabel("Difference (HU)")
-    A[1, 0].imshow(np.zeros_like(hu(base_ct)), origin="upper", cmap="seismic", vmin=-120, vmax=120)
+    show(A[1, 0], np.zeros_like(hu(base_ct)), cmap="seismic", vmin=-120, vmax=120)
     for r in (0, 1):
         A[r, 0].set_xticks([]); A[r, 0].set_yticks([])
     for i, (lev, par) in enumerate(zip(LEVELS, LEVEL_PARAMS)):
@@ -92,7 +94,7 @@ def main():
     show(A[0, 0], doseax(base_dose), cmap="jet", vmin=0, vmax=dmax)
     A[0, 0].set_title("Baseline")
     A[1, 0].set_ylabel("Dose diff (Gy)")
-    A[1, 0].imshow(np.zeros_like(doseax(base_dose)), origin="upper", cmap="RdBu_r", vmin=-5, vmax=5)
+    show(A[1, 0], np.zeros_like(doseax(base_dose)), cmap="RdBu_r", vmin=-5, vmax=5)
     for r in (0, 1):
         A[r, 0].set_xticks([]); A[r, 0].set_yticks([])
     for i, (lev, par) in enumerate(zip(LEVELS, LEVEL_PARAMS)):

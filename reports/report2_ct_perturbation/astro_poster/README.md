@@ -21,13 +21,25 @@ is required. Read section 0 first. Do not use em dashes anywhere in the poster t
    cross-sections, already verified. See section 6.
 7. Language must be formal and scientific. No em dashes. Use commas, periods, or parentheses.
 8. No vendor or commercial names anywhere (ACCME rule).
+9. Voice and structure: reuse the language, tone, and section structure of the group's prior AAPM
+   poster (full text in `AAPM_POSTER_TEXT.md`). This ASTRO study is the follow-up announced in that
+   poster's future-work line; the only substantive change is that the perturbations are now
+   clinically realistic physical models of CT variability rather than adversarial attacks. Mirror
+   its phrasing patterns (for example the "Key Finding:" callout in Results and the short
+   declarative bullets in Conclusions).
+10. The poster must explain, in plain language, what a perturbation family and a severity level
+    are before presenting results. Use the explanation paragraph at the top of section 4 verbatim
+    or near-verbatim; do not assume the reader knows what "L2" or "severity" means.
 
 ## 1. Title, authors, contact
 - Official title (use verbatim): "Assessing the Generalizability and Robustness of Deep-Learning
   Dose Prediction in Head-and-Neck Radiotherapy to Clinically Realistic CT Perturbations"
-- Authors: Neil Tripathi (New York University); Rahim Chowdhury (UMD St. Joseph Medical Center);
-  Lei Ren, Amit Sawant, Birjoo Vaishnav (University of Maryland School of Medicine, Department of
-  Radiation Oncology). Presenter of record: Birjoo Vaishnav.
+- Author block (exact, from the submitted abstract; use verbatim):
+  N. Tripathi(1), R. Chowdhury(2), L. Ren(3), A. Sawant(3), and B. D. Vaishnav(3);
+  (1) Department of Computer Science, New York University, New York, NY;
+  (2) University of Maryland Medical System, St. Joseph Medical Center, Baltimore, MD;
+  (3) Department of Radiation Oncology, University of Maryland, School of Medicine, Baltimore, MD.
+  Presenter of record: Birjoo Vaishnav.
 - Contact: Birjoo Vaishnav, PhD, DABR, University of Maryland School of Medicine, Baltimore, MD.
 
 ## 2. Model and data
@@ -53,6 +65,19 @@ ranges meet or exceed ACR CT-simulation quality-assurance limits.
 - P5 dental streak artifact: radial metal streaks anchored to the mandible.
 
 ## 4. Severity quantification and what it means (put this on the poster as a panel)
+
+What a perturbation family and a severity level are (explain this on the poster before any
+results): Each perturbation family is a controlled physical model of one real-world source of CT
+image variability: quantum noise, scanner calibration drift, low-frequency shading, loss of spatial
+resolution, or dental metal artifact. Severity is the strength of that perturbation, expressed in
+physical units: Hounsfield units (HU) for the four intensity families, and voxels of Gaussian blur
+for spatial resolution. Each family is applied at five increasing severity levels. The levels are
+chosen so that the lowest fall within routine clinical variation, the middle levels approach the
+tolerance limits of the ACR CT quality assurance program, and the highest intentionally exceed
+anything expected in practice, in order to locate the point at which the model fails. Because every
+patient is compared against their own unperturbed prediction, the reported change isolates the
+effect of the image perturbation alone.
+
 For each level: the physical parameter, a plain-language equivalent, whether it is within the
 realistic clinical range, and the resulting DVH-score change (percent, cohort mean over 40 patients).
 
@@ -120,7 +145,9 @@ confirmed visually against `ct_orientation_xyz.png` (X is coronal, Y is sagittal
 CT and dose panels in this package (`ct_slices_axial.png`, `dose_difference_axial.png`,
 `p4_ct_progression.png`, `p4_dose_progression.png`) are true axial slices taken at the
 superior-inferior index with the largest planning-target-volume area (slice 53 for pt_201), cropped
-to the body, in conventional radiological orientation. No further orientation checking is needed.
+to the body. Per the presenter's request the panels are flipped 180 degrees in y (anterior points
+down, the mandible is at the bottom of each panel). Use them exactly as provided; no further
+orientation change is needed.
 
 ## 7. Figures in this package
 - `ct_orientation_xyz.png`: original CT sliced along X, Y, Z (orientation reference; Z is axial).
@@ -134,6 +161,14 @@ to the body, in conventional radiological orientation. No further orientation ch
 - `panel4_threshold_table.md`, `panel4_threshold_table.csv`: the threshold table.
 
 ## 8. Ready-to-paste poster text (formal, no em dashes)
+
+Note on the abstract: the officially submitted abstract is locked and publishes as submitted. It
+begins "Purpose/Objective(s): The primary goal of this work is to establish a framework for
+assessing the generalizability of a deep-learning dose prediction..." and was emailed by the
+presenter. If the full submitted abstract text is supplied alongside this package, use it verbatim
+for the ABSTRACT panel and use the text below for the remaining panels. Rewrite the panels below in
+the voice of `AAPM_POSTER_TEXT.md` (instruction 9 in section 0) while keeping every number
+unchanged.
 
 Purpose. Deep-learning dose prediction models are increasingly deployed across institutions, where
 they encounter CT images from different scanners, reconstruction kernels, and acquisition protocols.
