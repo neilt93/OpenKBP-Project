@@ -159,6 +159,8 @@ orientation change is needed.
 - `fig_panel5_dvh_pct.png`: aggregate DVH-score change vs severity.
 - `degradation_curves.png`, `degradation_heatmap.png`, `structure_radar.png`, `summary_bars.png`.
 - `panel4_threshold_table.md`, `panel4_threshold_table.csv`: the threshold table.
+- `mae_dvh_error_table.md`, `mae_dvh_error_table.csv`: dose MAE (Gy) and DVH error (Gy) for all
+  26 conditions with deltas vs baseline; suitable as a results panel table.
 
 ## 8. Ready-to-paste poster text (formal, no em dashes)
 
