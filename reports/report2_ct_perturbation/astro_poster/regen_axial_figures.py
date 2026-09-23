@@ -4,8 +4,8 @@ figure's exact orientation/recipe (save_adversarial_ct_figures.py), no GPU.
 
 Reads OpenKBP CTs, perturbed CTs, PTV masks, and the already-computed prediction CSVs from the
 SanDisk warehouse (CPU only). Axes (D,H,W)=(A-P,L-R,S-I); axial slice = (D,H) at the max-PTV-area
-S-I index; crop to the body bbox; display imshow(img.T, origin='lower') so anatomy fills the frame
-exactly like the adversarial poster figure.
+S-I index; crop to the body bbox; display in conventional radiological AXIAL orientation
+(anterior up, patient-left on the right).
 """
 import os
 import numpy as np
@@ -69,7 +69,10 @@ def main():
     h0, h1 = max(xs.min() - mg, 0), min(xs.max() + mg + 1, body.shape[1])
     crop = lambda a: a[d0:d1, h0:h1]
     hu = lambda a: crop(ax(a)) - HU_OFFSET              # display in true HU
-    show = lambda axi, img, **kw: axi.imshow(img.T, origin="lower", interpolation="bilinear", **kw)
+    # Conventional radiological AXIAL orientation: rows = A-P (anterior at top, since mandible sits
+    # at low axis0 and cord at high axis0), cols = L-R (patient-left at right, parotid geometry).
+    # No transpose (the adversarial code's img.T rotated the axial plane 90°, which read as coronal).
+    show = lambda axi, img, **kw: axi.imshow(img, origin="upper", interpolation="bilinear", **kw)
     body_c = crop(body).astype(float)
 
     # ---- CT slices ----
@@ -79,7 +82,7 @@ def main():
     A[0, 0].set_title("Original"); A[1, 0].set_ylabel("Difference (HU)")
     for r in (0, 1):
         A[r, 0].set_xticks([]); A[r, 0].set_yticks([])
-    A[1, 0].imshow(np.zeros_like(hu(base_ct)).T, origin="lower", cmap="seismic", vmin=-80, vmax=80)
+    A[1, 0].imshow(np.zeros_like(hu(base_ct)), origin="upper", cmap="seismic", vmin=-80, vmax=80)
     for i, (fam, lab) in enumerate(FAMILIES):
         c = i + 1
         pv = load_vol(f"{PERT}/{fam}/{LEVEL}/{PID}/ct.csv")
@@ -101,7 +104,7 @@ def main():
     A[0, 0].set_title("Baseline"); A[1, 0].set_ylabel("Dose diff (Gy)")
     for r in (0, 1):
         A[r, 0].set_xticks([]); A[r, 0].set_yticks([])
-    A[1, 0].imshow(np.zeros_like(doseax(base_dose)).T, origin="lower", cmap="RdBu_r", vmin=-5, vmax=5)
+    A[1, 0].imshow(np.zeros_like(doseax(base_dose)), origin="upper", cmap="RdBu_r", vmin=-5, vmax=5)
     for i, (fam, lab) in enumerate(FAMILIES):
         c = i + 1
         pdose = load_vol(f"{PRED}/{fam}/{LEVEL}/{PID}.csv")
