@@ -11,14 +11,14 @@ is required. Read section 0 first. Do not use em dashes anywhere in the poster t
 4. Fill the whole page. Do not leave large empty areas. Use a multi column layout, place figures at
    a readable size, and add a severity table (section 4) as its own panel so the page is full.
 5. Figures to place (files in this package):
-   a. CT perturbation examples (`ct_slices_x.png`).
+   a. CT perturbation examples (`ct_slices_axial.png`).
    b. Threshold / severity curve (`fig_panel5_maxcrit_gy.png`), the key quantitative figure.
-   c. Dose difference maps (`dose_difference_x.png`).
+   c. Dose difference maps (`dose_difference_axial.png`).
    d. Resolution severity progression (`p4_ct_progression.png` and `p4_dose_progression.png`).
    e. DVH curves under resolution loss (`dvh_Larynx.png`, `dvh_PTV70.png`).
    f. Optional: `degradation_curves.png`, `structure_radar.png`, `summary_bars.png`.
-6. Orientation of the CT/dose panels: see section 6. Confirm the axial view using
-   `ct_orientation_xyz.png` before finalizing.
+6. Orientation of the CT/dose panels: all provided CT and dose panels are true axial (transverse)
+   cross-sections, already verified. See section 6.
 7. Language must be formal and scientific. No em dashes. Use commas, periods, or parentheses.
 8. No vendor or commercial names anywhere (ACCME rule).
 
@@ -113,17 +113,19 @@ realistic range of cross-scanner slice-thickness and kernel differences), and re
 larynx at L4 (a plus 18.2 percent DVH-score change). The sensitive structures are geometrically
 complex ones (larynx, parotid glands, mandible).
 
-## 6. Figure orientation (important)
-The CT and dose panels are true axial cross-sections. To confirm the orientation before finalizing,
-open `ct_orientation_xyz.png`, which shows the same patient sliced three ways (along X, Y, Z). Pick
-the panel that is the axial (transverse) cross-section and use the panels sliced the same way. The
-provided `ct_slices_x.png`, `dose_difference_x.png`, `p4_ct_progression.png`, and
-`p4_dose_progression.png` are sliced along the X axis (axis 0).
+## 6. Figure orientation (resolved, verified visually)
+The OpenKBP volume axes are (anterior-posterior, left-right, superior-inferior). Slicing along the
+third axis (Z, superior-inferior) gives the true axial (transverse) cross-section; this was
+confirmed visually against `ct_orientation_xyz.png` (X is coronal, Y is sagittal, Z is axial). All
+CT and dose panels in this package (`ct_slices_axial.png`, `dose_difference_axial.png`,
+`p4_ct_progression.png`, `p4_dose_progression.png`) are true axial slices taken at the
+superior-inferior index with the largest planning-target-volume area (slice 53 for pt_201), cropped
+to the body, in conventional radiological orientation. No further orientation checking is needed.
 
 ## 7. Figures in this package
-- `ct_orientation_xyz.png`: original CT sliced along X, Y, Z (use to confirm the axial view).
-- `ct_slices_x.png`: original CT plus each perturbation family at level L2, with difference maps.
-- `dose_difference_x.png`: predicted dose plus difference from baseline per family.
+- `ct_orientation_xyz.png`: original CT sliced along X, Y, Z (orientation reference; Z is axial).
+- `ct_slices_axial.png`: original CT plus each perturbation family at level L2, with difference maps.
+- `dose_difference_axial.png`: predicted dose plus difference from baseline per family.
 - `p4_ct_progression.png`, `p4_dose_progression.png`: resolution loss L0 to L4 (the failure mode).
 - `dvh_Larynx.png`, `dvh_PTV70.png`: cumulative DVH curves, baseline vs resolution L0 to L4.
 - `fig_panel5_maxcrit_gy.png`: max per-criterion DVH shift vs severity, with the 1.0 Gy line.
